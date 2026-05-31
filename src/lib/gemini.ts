@@ -1,73 +1,35 @@
 import { SYSTEM_PROMPT } from './systemPrompt';
 
-const API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || '';
-const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const FREE_MODELS = [
-  'deepseek/deepseek-chat-v3-5:free',
-  'deepseek/deepseek-r1-distill-llama-8b:free',
-  'google/gemma-2-9b-it:free',
-  'qwen/qwen-2-7b-instruct:free',
-  'microsoft/phi-3-mini-128k-instruct:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-];
+const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${API_KEY}`;
+const RAW_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=`;
 
-// OpenRouter message format (OpenAI-compatible)
 export interface GeminiMessage {
   role: string;
   parts: { text: string }[];
 }
 
-interface ORMessage { role: string; content: string }
-
-function toOR(messages: GeminiMessage[]): ORMessage[] {
-  return messages.map((m) => ({
-    role: m.role === 'model' ? 'assistant' : m.role,
-    content: m.parts.map((p) => p.text).join(''),
-  }));
-}
-
-async function orFetch(messages: ORMessage[]): Promise<string> {
-  if (!API_KEY) return '';
-  for (const model of FREE_MODELS) {
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${API_KEY}`,
-          'HTTP-Referer': 'https://feyman-ag01.netlify.app',
-          'X-Title': 'FEYMAN AG01',
-        },
-        body: JSON.stringify({ model, messages }),
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        const msg = (err as { error?: { message?: string } })?.error?.message || '';
-        if (msg.includes('No endpoints found') || msg.includes('not found') || msg.includes('Provider returned error') || msg.includes('upstream')) continue;
-        throw new Error(msg || `HTTP ${response.status}`);
-      }
-      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-      const text = data.choices?.[0]?.message?.content || '';
-      if (text) return text;
-    } catch (e) {
-      if (e instanceof Error && (e.message.includes('No endpoints') || e.message.includes('not found') || e.message.includes('Provider returned') || e.message.includes('upstream'))) continue;
-      throw e;
-    }
-  }
-  throw new Error('Nessun modello disponibile al momento. Riprova tra poco.');
-}
-
 export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
   if (!API_KEY) {
-    return 'Chiave API mancante. Aggiungi NEXT_PUBLIC_OPENROUTER_API_KEY nelle variabili di Netlify.';
+    return 'Chiave API mancante. Aggiungi NEXT_PUBLIC_GEMINI_API_KEY nelle variabili di Netlify.';
   }
   try {
-    const orMessages: ORMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...toOR(messages),
-    ];
-    return await orFetch(orMessages) || 'Nessuna risposta ricevuta.';
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: messages,
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`);
+    }
+    const data = await response.json() as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Nessuna risposta ricevuta.';
   } catch (error) {
     return `Errore: ${error instanceof Error ? error.message : 'sconosciuto'}`;
   }
@@ -76,10 +38,17 @@ export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
 async function rawGenerate(prompt: string): Promise<string> {
   if (!API_KEY) return '';
   try {
-    return await orFetch([{ role: 'user', content: prompt }]);
-  } catch {
-    return '';
-  }
+    const response = await fetch(`${RAW_URL}${API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    });
+    if (!response.ok) return '';
+    const data = await response.json() as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  } catch { return ''; }
 }
 
 export interface Flashcard { front: string; back: string }
