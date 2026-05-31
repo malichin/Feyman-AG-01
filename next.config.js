@@ -6,7 +6,7 @@
 
 const nextConfig = {
   reactStrictMode: true,
-  turbopack: {},
+  output: 'export',
 };
 
 module.exports = nextConfig;
