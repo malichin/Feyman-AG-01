@@ -3,12 +3,13 @@ import { SYSTEM_PROMPT } from './systemPrompt';
 const API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || '';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const FREE_MODELS = [
+  'deepseek/deepseek-chat-v3-5:free',
+  'deepseek/deepseek-r1-distill-llama-8b:free',
   'google/gemma-2-9b-it:free',
   'qwen/qwen-2-7b-instruct:free',
   'microsoft/phi-3-mini-128k-instruct:free',
-  'nousresearch/hermes-3-llama-3.1-405b:free',
-  'mistralai/mistral-7b-instruct:free',
   'meta-llama/llama-3.1-8b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
 ];
 
 // OpenRouter message format (OpenAI-compatible)
@@ -43,14 +44,14 @@ async function orFetch(messages: ORMessage[]): Promise<string> {
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         const msg = (err as { error?: { message?: string } })?.error?.message || '';
-        if (msg.includes('No endpoints found') || msg.includes('not found')) continue;
+        if (msg.includes('No endpoints found') || msg.includes('not found') || msg.includes('Provider returned error') || msg.includes('upstream')) continue;
         throw new Error(msg || `HTTP ${response.status}`);
       }
       const data = await response.json() as { choices?: { message?: { content?: string } }[] };
       const text = data.choices?.[0]?.message?.content || '';
       if (text) return text;
     } catch (e) {
-      if (e instanceof Error && (e.message.includes('No endpoints') || e.message.includes('not found'))) continue;
+      if (e instanceof Error && (e.message.includes('No endpoints') || e.message.includes('not found') || e.message.includes('Provider returned') || e.message.includes('upstream'))) continue;
       throw e;
     }
   }
