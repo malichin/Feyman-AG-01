@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   CheckSquare,
@@ -13,6 +13,7 @@ import {
   CheckCircle,
   XCircle,
 } from 'lucide-react';
+import { useApp } from '@/context/AppContext';
 import {
   generateFlashcards,
   generateMultipleChoice,
@@ -374,12 +375,24 @@ function ErrorScreen({ message }: { message: string }) {
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 export default function PlayView() {
+  const { pendingPlayTopic, clearPendingPlayTopic } = useApp();
   const [step, setStep] = useState<Step>('topic');
   const [topicInput, setTopicInput] = useState('');
   const [topic, setTopic] = useState('');
   const [mode, setMode] = useState<Mode | null>(null);
   const [gameKey, setGameKey] = useState(0);
   const [score, setScore] = useState<{ score: number; total: number } | null>(null);
+
+  // Pre-fill topic when navigated from Projects
+  useEffect(() => {
+    if (pendingPlayTopic) {
+      setTopicInput(pendingPlayTopic);
+      setTopic(pendingPlayTopic);
+      setStep('mode');
+      clearPendingPlayTopic();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPlayTopic]);
 
   const handleTopicSubmit = () => {
     const t = topicInput.trim();

@@ -27,6 +27,13 @@ interface AppContextValue {
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   refreshSessions: () => void;
   refreshProjects: () => void;
+  // Cross-view navigation helpers
+  pendingMessage: string | null;
+  clearPendingMessage: () => void;
+  pendingPlayTopic: string | null;
+  clearPendingPlayTopic: () => void;
+  startChatWithMessage: (msg: string) => void;
+  startPlayWithTopic: (topic: string) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -37,6 +44,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [pendingPlayTopic, setPendingPlayTopic] = useState<string | null>(null);
 
   const refreshSessions = useCallback(() => {
     setSessions(getSessions());
@@ -104,6 +113,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const startChatWithMessage = useCallback((msg: string) => {
+    const newSession: Session = {
+      id: generateId(),
+      title: 'Nuova sessione',
+      date: new Date().toISOString(),
+      subject: '',
+      messages: [],
+      duration: 0,
+    };
+    setCurrentSession(newSession);
+    setPendingMessage(msg);
+    setCurrentView('chat');
+    setSidebarOpen(false);
+  }, []);
+
+  const startPlayWithTopic = useCallback((topic: string) => {
+    setPendingPlayTopic(topic);
+    setCurrentView('play');
+    setSidebarOpen(false);
+  }, []);
+
   return (
     <AppContext.Provider
       value={{
@@ -123,6 +153,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         addMessage,
         refreshSessions,
         refreshProjects,
+        pendingMessage,
+        clearPendingMessage: () => setPendingMessage(null),
+        pendingPlayTopic,
+        clearPendingPlayTopic: () => setPendingPlayTopic(null),
+        startChatWithMessage,
+        startPlayWithTopic,
       }}
     >
       {children}

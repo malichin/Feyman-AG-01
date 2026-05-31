@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, Plus } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { sendMessage, GeminiMessage } from '@/lib/gemini';
 
@@ -110,11 +110,12 @@ function UserMessage({ content }: { content: string }) {
 }
 
 export default function ChatView() {
-  const { currentSession, addMessage } = useApp();
+  const { currentSession, addMessage, startNewSession, pendingMessage, clearPendingMessage } = useApp();
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingFiredRef = useRef(false);
 
   const messages = currentSession?.messages || [];
 
@@ -129,6 +130,18 @@ export default function ChatView() {
       ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
     }
   }, [inputValue]);
+
+  // Auto-send message when navigated here from Projects
+  useEffect(() => {
+    if (pendingMessage && !pendingFiredRef.current) {
+      pendingFiredRef.current = true;
+      clearPendingMessage();
+      // Small delay to let the session render first
+      const t = setTimeout(() => handleSend(pendingMessage), 100);
+      return () => clearTimeout(t);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMessage]);
 
   const handleSend = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -170,6 +183,24 @@ export default function ChatView() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Chat top bar — shown only when conversation is active */}
+      {messages.length > 0 && (
+        <div className="flex items-center justify-between px-4 md:px-8 py-2 border-b border-[#f1f5f9]">
+          <span className="text-xs text-[#94a3b8] truncate flex-1 pr-2">
+            {currentSession?.title && currentSession.title !== 'Nuova sessione'
+              ? currentSession.title
+              : 'Chat'}
+          </span>
+          <button
+            onClick={startNewSession}
+            className="flex items-center gap-1.5 text-xs text-[#64748b] hover:text-[#2e86ab] transition-colors px-2 py-1.5 rounded-lg hover:bg-[#f0f8ff] flex-shrink-0"
+          >
+            <Plus size={13} />
+            Nuova chat
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
         <div className="max-w-2xl mx-auto">

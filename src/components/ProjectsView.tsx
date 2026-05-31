@@ -17,6 +17,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { Subject, getSubjects, saveSubjects, generateId } from '@/lib/storage';
+import { useApp } from '@/context/AppContext';
 
 const FILE_TYPES = [
   { id: 'spiegazione', label: 'Spiegazione', icon: <BookOpen size={14} /> },
@@ -27,27 +28,58 @@ const FILE_TYPES = [
   { id: 'rapporti', label: 'Rapporti', icon: <TrendingUp size={14} /> },
 ];
 
-function FileNode({ label, icon }: { label: string; icon?: React.ReactNode }) {
+function FileNode({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  onClick: () => void;
+}) {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-[#f8fafc] cursor-pointer group">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[#f0f8ff] active:bg-[#e0f0ff] cursor-pointer group text-left transition-colors"
+    >
       <span className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors">
         {icon || <FileText size={14} />}
       </span>
-      <span className="text-xs text-[#64748b] group-hover:text-[#0d1b2a] transition-colors">{label}</span>
-    </div>
+      <span className="text-xs text-[#64748b] group-hover:text-[#2e86ab] transition-colors">{label}</span>
+    </button>
   );
 }
 
 function TopicNode({
   label,
-  subjectId,
+  subject,
   onDelete,
 }: {
   label: string;
-  subjectId: string;
+  subject: Subject;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { startChatWithMessage, startPlayWithTopic, setCurrentView } = useApp();
+
+  const handleFileAction = (fileId: string) => {
+    switch (fileId) {
+      case 'spiegazione':
+        startChatWithMessage(`Voglio capire l'argomento: "${label}" (materia: ${subject.label}). Spiegamelo con il metodo Feynman.`);
+        break;
+      case 'flashcard':
+      case 'quiz':
+      case 'verifiche':
+        startPlayWithTopic(`${label} — ${subject.label}`);
+        break;
+      case 'tecniche':
+        startChatWithMessage(`Quali tecniche di studio mi consigli per memorizzare "${label}" (materia: ${subject.label})?`);
+        break;
+      case 'rapporti':
+        setCurrentView('progress');
+        break;
+    }
+  };
 
   return (
     <div>
@@ -73,7 +105,12 @@ function TopicNode({
       {open && (
         <div className="ml-6 mt-0.5 space-y-0.5">
           {FILE_TYPES.map((ft) => (
-            <FileNode key={`${subjectId}-${label}-${ft.id}`} label={ft.label} icon={ft.icon} />
+            <FileNode
+              key={`${subject.id}-${label}-${ft.id}`}
+              label={ft.label}
+              icon={ft.icon}
+              onClick={() => handleFileAction(ft.id)}
+            />
           ))}
         </div>
       )}
@@ -143,7 +180,7 @@ function SubjectNode({
             <TopicNode
               key={`${subject.id}-${i}`}
               label={topic}
-              subjectId={subject.id}
+              subject={subject}
               onDelete={() => handleDeleteTopic(i)}
             />
           ))}
