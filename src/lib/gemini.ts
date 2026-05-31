@@ -2,7 +2,7 @@ import { SYSTEM_PROMPT } from './systemPrompt';
 
 const API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || '';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'meta-llama/llama-3.1-8b-instruct:free';
+const MODEL = 'mistralai/mistral-7b-instruct:free';
 
 // OpenRouter message format (OpenAI-compatible)
 export interface GeminiMessage {
