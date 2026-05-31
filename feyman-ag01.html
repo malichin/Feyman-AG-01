@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FEYMAN AG01</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #FFFFFF; color: #0d1b2a; overscroll-behavior: none; }
+  .dot-anim span { animation: blink 1.4s infinite both; }
+  .dot-anim span:nth-child(2) { animation-delay: .2s; }
+  .dot-anim span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
+  .flip-card { perspective: 1000px; }
+  .flip-inner { transition: transform 0.5s; transform-style: preserve-3d; }
+  .flip-inner.flipped { transform: rotateY(180deg); }
+  .flip-front, .flip-back { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .flip-back { transform: rotateY(180deg); }
+  .tab-bar { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .content-area { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+  ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+  .msg-bubble { max-width: 85%; }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+// ─── STATE ────────────────────────────────────────────────────────────────────
+const S = {
+  tab: 'chat',
+  apiKey: localStorage.getItem('feyman_api_key') || '',
+  showSetup: false,
+  // Chat
+  sessions: JSON.parse(localStorage.getItem('feyman_sessions') || '[]'),
+  currentSession: null,  // {id, title, messages:[]}
+  chatLoading: false,
+  // Progetti
+  subjects: JSON.parse(localStorage.getItem('feyman_subjects') || '[]'),
+  addingSubject: false,
+  addingTopicTo: null,
+  // Play
+  playTopic: '',
+  playMode: null,
+  playItems: [],
+  playIndex: 0,
+  playScore: 0,
+  playFlipped: false,
+  playSelected: null,
+  playLoading: false,
+  playDone: false,
+  // Memoria
+};
+
+// ─── SAVE ─────────────────────────────────────────────────────────────────────
+function save() {
+  localStorage.setItem('feyman_sessions', JSON.stringify(S.sessions));
+  localStorage.setItem('feyman_subjects', JSON.stringify(S.subjects));
+  if (S.apiKey) localStorage.setItem('feyman_api_key', S.apiKey);
+}
+
+// ─── RENDER ───────────────────────────────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  if (!S.apiKey) { app.innerHTML = setupHTML(); bindSetup(); return; }
+  if (S.showSetup) { app.innerHTML = settingsHTML(); bindSettings(); return; }
+  app.innerHTML = mainHTML();
+  bindMain();
+}
+
+// ─── SETUP SCREEN ─────────────────────────────────────────────────────────────
+function setupHTML() {
+  return `
+  <div class="min-h-screen flex flex-col items-center justify-center px-6 py-12 bg-white">
+    <div class="w-full max-w-md">
+      <div class="text-center mb-8">
+        <div class="text-4xl font-bold text-[#2e86ab] mb-1">FEYMAN AG01</div>
+        <div class="text-sm text-gray-500">Tutor di studio · Metodo Feynman</div>
+      </div>
+      <div class="bg-gray-50 rounded-2xl p-6 mb-6">
+        <div class="text-base font-semibold text-[#0d1b2a] mb-4">Per iniziare, ti serve una chiave API gratuita:</div>
+        <ol class="space-y-3 text-sm text-gray-700">
+          <li class="flex gap-3"><span class="flex-shrink-0 w-6 h-6 rounded-full bg-[#2e86ab] text-white text-xs flex items-center justify-center font-bold">1</span><span>Vai su <span class="font-mono text-[#2e86ab]">aistudio.google.com/apikey</span></span></li>
+          <li class="flex gap-3"><span class="flex-shrink-0 w-6 h-6 rounded-full bg-[#2e86ab] text-white text-xs flex items-center justify-center font-bold">2</span><span>Accedi con il tuo account Google</span></li>
+          <li class="flex gap-3"><span class="flex-shrink-0 w-6 h-6 rounded-full bg-[#2e86ab] text-white text-xs flex items-center justify-center font-bold">3</span><span>Clicca su <strong>Crea chiave API</strong></span></li>
+          <li class="flex gap-3"><span class="flex-shrink-0 w-6 h-6 rounded-full bg-[#2e86ab] text-white text-xs flex items-center justify-center font-bold">4</span><span>Incolla la chiave qui sotto</span></li>
+        </ol>
+      </div>
+      <input id="apiKeyInput" type="password" placeholder="Incolla la chiave API..." class="w-full border border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-[#2e86ab] mb-3" />
+      <button id="saveKeyBtn" class="w-full bg-[#2e86ab] text-white rounded-xl py-3 text-base font-semibold active:opacity-80">Inizia a studiare →</button>
+    </div>
+  </div>`;
+}
+function bindSetup() {
+  document.getElementById('saveKeyBtn').addEventListener('click', () => {
+    const v = document.getElementById('apiKeyInput').value.trim();
+    if (!v) return;
+    S.apiKey = v;
+    save();
+    render();
+  });
+  document.getElementById('apiKeyInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('saveKeyBtn').click(); });
+}
+
+function settingsHTML() {
+  return `
+  <div class="min-h-screen flex flex-col items-center justify-center px-6 py-12 bg-white">
+    <div class="w-full max-w-md">
+      <div class="flex items-center mb-8 gap-3">
+        <button id="backBtn" class="text-[#2e86ab] text-2xl leading-none">←</button>
+        <div class="text-xl font-bold text-[#0d1b2a]">Impostazioni</div>
+      </div>
+      <div class="text-sm text-gray-500 mb-2">Chiave API Gemini</div>
+      <input id="apiKeyInput" type="password" value="${escHtml(S.apiKey)}" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-[#2e86ab] mb-3" />
+      <button id="saveKeyBtn" class="w-full bg-[#2e86ab] text-white rounded-xl py-3 text-base font-semibold active:opacity-80">Salva</button>
+    </div>
+  </div>`;
+}
+function bindSettings() {
+  document.getElementById('backBtn').addEventListener('click', () => { S.showSetup = false; render(); });
+  document.getElementById('saveKeyBtn').addEventListener('click', () => {
+    const v = document.getElementById('apiKeyInput').value.trim();
+    if (!v) return;
+    S.apiKey = v;
+    S.showSetup = false;
+    save();
+    render();
+  });
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+function mainHTML() {
+  return `
+  <div class="min-h-screen flex flex-col">
+    <div class="flex-1 content-area overflow-y-auto" id="mainContent">
+      ${S.tab === 'chat' ? chatTabHTML() : ''}
+      ${S.tab === 'progetti' ? progettiTabHTML() : ''}
+      ${S.tab === 'play' ? playTabHTML() : ''}
+      ${S.tab === 'memoria' ? memoriaTabHTML() : ''}
+    </div>
+    <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 tab-bar z-50">
+      <div class="flex">
+        ${tabBtn('chat','💬','Chat')}
+        ${tabBtn('progetti','📚','Progetti')}
+        ${tabBtn('play','🎮','Play')}
+        ${tabBtn('memoria','🧠','Memoria')}
+      </div>
+    </div>
+  </div>`;
+}
+function tabBtn(id, icon, label) {
+  const active = S.tab === id;
+  return `<button data-tab="${id}" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 ${active ? 'text-[#2e86ab]' : 'text-gray-400'} active:opacity-70">
+    <span class="text-xl">${icon}</span>
+    <span class="text-xs font-medium">${label}</span>
+  </button>`;
+}
+
+function bindMain() {
+  // Tab switching
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      S.tab = btn.dataset.tab;
+      render();
+    });
+  });
+  if (S.tab === 'chat') bindChat();
+  if (S.tab === 'progetti') bindProgetti();
+  if (S.tab === 'play') bindPlay();
+  if (S.tab === 'memoria') bindMemoria();
+  // Settings
+  const sg = document.getElementById('settingsGear');
+  if (sg) sg.addEventListener('click', () => { S.showSetup = true; render(); });
+}
+
+// ─── CHAT TAB ─────────────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `Sei FEYMAN AG01, un tutor di studio basato sul metodo Feynman. Il tuo obiettivo è aiutare l'utente a capire davvero gli argomenti, non solo memorizzarli.
+
+Quando l'utente vuole capire qualcosa:
+1. Chiedi di spiegartelo con parole sue (come se tu fossi un bambino)
+2. Identifica i punti di debolezza
+3. Torna alle basi per colmare i gap
+4. Ripeti finché la spiegazione è chiara e semplice
+
+Rispondi sempre in italiano. Sii incoraggiante, paziente e chiaro. Usa esempi concreti e analogie semplici.
+
+Quando dai opzioni all'utente, usa questo formato esatto (così l'app le mostra come pulsanti):
+1 — Prima opzione
+2 — Seconda opzione
+3 — Terza opzione
+
+Non usare markdown complesso. Testo semplice con a capo per separare i concetti.`;
+
+function chatTabHTML() {
+  const session = S.currentSession;
+  if (!session) {
+    return `
+    <div class="flex flex-col min-h-full">
+      <div class="flex items-center justify-between px-4 pt-12 pb-4">
+        <div>
+          <div class="text-2xl font-bold text-[#0d1b2a]">FEYMAN AG01</div>
+          <div class="text-sm text-gray-400">Tutor · Metodo Feynman</div>
+        </div>
+        <button id="settingsGear" class="w-10 h-10 flex items-center justify-center text-gray-400 text-xl rounded-full active:bg-gray-100">⚙️</button>
+      </div>
+      <div class="flex-1 flex flex-col justify-end px-4 pb-4">
+        <div class="text-center mb-8">
+          <div class="text-5xl mb-3">🎓</div>
+          <div class="text-lg font-semibold text-[#0d1b2a] mb-1">Ciao! Sono il tuo tutor.</div>
+          <div class="text-sm text-gray-500">Cosa vuoi fare oggi?</div>
+        </div>
+        <div class="grid grid-cols-1 gap-3">
+          ${welcomeBtn('Capire un argomento da zero','🔍')}
+          ${welcomeBtn('Studiare meglio qualcosa che sto già leggendo','📖')}
+          ${welcomeBtn('Chiarire una parte che non mi è chiara','❓')}
+          ${welcomeBtn('Memorizzare quello che ho già capito','💡')}
+        </div>
+      </div>
+    </div>`;
+  }
+  const msgs = session.messages.map(m => msgHTML(m)).join('');
+  const loadingDot = S.chatLoading ? `<div class="flex justify-start mb-3"><div class="msg-bubble bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3"><div class="dot-anim flex gap-1"><span class="w-2 h-2 bg-gray-400 rounded-full inline-block"></span><span class="w-2 h-2 bg-gray-400 rounded-full inline-block"></span><span class="w-2 h-2 bg-gray-400 rounded-full inline-block"></span></div></div></div>` : '';
+  const lastAI = !S.chatLoading && session.messages.length > 0 ? session.messages[session.messages.length-1] : null;
+  const aiButtons = (lastAI && lastAI.role === 'model') ? extractButtons(lastAI.content).map(b => `<button class="ai-opt-btn w-full text-left border border-[#2e86ab] text-[#2e86ab] rounded-xl px-4 py-2.5 text-sm active:bg-[#2e86ab] active:text-white mb-2" data-text="${escHtml(b.text)}">${escHtml(b.text)}</button>`).join('') : '';
+  return `
+  <div class="flex flex-col min-h-full">
+    <div class="flex items-center justify-between px-4 pt-12 pb-3 border-b border-gray-100 bg-white sticky top-0 z-10">
+      <div>
+        <div class="text-base font-bold text-[#0d1b2a] truncate max-w-[200px]">${escHtml(session.title || 'Chat')}</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="newChatBtn" class="text-xs text-[#2e86ab] border border-[#2e86ab] rounded-lg px-3 py-1.5 active:bg-[#2e86ab] active:text-white">Nuova chat</button>
+        <button id="settingsGear" class="w-9 h-9 flex items-center justify-center text-gray-400 text-lg rounded-full active:bg-gray-100">⚙️</button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto px-4 py-4" id="chatMessages">
+      ${msgs}${loadingDot}
+    </div>
+    ${aiButtons ? `<div class="px-4 pb-2">${aiButtons}</div>` : ''}
+    <div class="px-4 pb-3 pt-2 border-t border-gray-100 bg-white">
+      <div class="flex gap-2 items-end">
+        <textarea id="chatInput" placeholder="Scrivi un messaggio..." rows="1" class="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#2e86ab] resize-none" style="max-height:120px"></textarea>
+        <button id="sendBtn" class="w-10 h-10 flex-shrink-0 bg-[#2e86ab] rounded-xl flex items-center justify-center text-white text-lg active:opacity-80" ${S.chatLoading ? 'disabled' : ''}>↑</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function welcomeBtn(text, icon) {
+  return `<button class="welcome-opt text-left bg-gray-50 hover:bg-gray-100 active:bg-gray-100 border border-gray-100 rounded-2xl px-4 py-3.5 flex items-center gap-3" data-text="${escHtml(text)}">
+    <span class="text-xl flex-shrink-0">${icon}</span>
+    <span class="text-sm font-medium text-[#0d1b2a]">${escHtml(text)}</span>
+  </button>`;
+}
+
+function msgHTML(m) {
+  const isUser = m.role === 'user';
+  const text = cleanMsgText(m.content);
+  return `<div class="flex ${isUser ? 'justify-end' : 'justify-start'} mb-3">
+    <div class="msg-bubble ${isUser ? 'bg-[#2e86ab] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 text-[#0d1b2a] rounded-2xl rounded-bl-sm'} px-4 py-3 text-sm whitespace-pre-wrap">${escHtml(text)}</div>
+  </div>`;
+}
+
+function cleanMsgText(text) {
+  return text.replace(/^([1-9]|S)\s*[—\-.]\s*.+\n?/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function extractButtons(text) {
+  const btns = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const m = line.match(/^([1-9]|S)\s*[—\-.]\s*(.+)/);
+    if (m) btns.push({ key: m[1], text: m[2].trim() });
+  }
+  return btns;
+}
+
+function bindChat() {
+  const newBtn = document.getElementById('newChatBtn');
+  if (newBtn) newBtn.addEventListener('click', () => { S.currentSession = null; render(); });
+
+  document.querySelectorAll('.welcome-opt').forEach(btn => {
+    btn.addEventListener('click', () => sendMessage(btn.dataset.text));
+  });
+
+  document.querySelectorAll('.ai-opt-btn').forEach(btn => {
+    btn.addEventListener('click', () => sendMessage(btn.dataset.text));
+  });
+
+  const input = document.getElementById('chatInput');
+  const sendBtn = document.getElementById('sendBtn');
+  if (input && sendBtn) {
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    });
+    sendBtn.addEventListener('click', () => {
+      const v = input.value.trim();
+      if (v) sendMessage(v);
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const v = input.value.trim(); if (v) sendMessage(v); }
+    });
+  }
+  scrollChatBottom();
+}
+
+function scrollChatBottom() {
+  setTimeout(() => {
+    const el = document.getElementById('chatMessages');
+    if (el) el.scrollTop = el.scrollHeight;
+  }, 50);
+}
+
+async function sendMessage(text) {
+  if (S.chatLoading) return;
+  if (!S.currentSession) {
+    S.currentSession = { id: Date.now(), title: text.slice(0, 40), messages: [] };
+    S.sessions.unshift(S.currentSession);
+  }
+  S.currentSession.messages.push({ role: 'user', content: text });
+  S.chatLoading = true;
+  render();
+  scrollChatBottom();
+
+  try {
+    const reply = await callGemini(S.currentSession.messages);
+    S.currentSession.messages.push({ role: 'model', content: reply });
+  } catch(e) {
+    S.currentSession.messages.push({ role: 'model', content: 'Errore: ' + (e.message || 'Qualcosa è andato storto. Riprova.') });
+  }
+  S.chatLoading = false;
+  save();
+  render();
+  scrollChatBottom();
+}
+
+async function callGemini(messages, systemOverride) {
+  const sys = systemOverride || SYSTEM_PROMPT;
+  const contents = messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content }]
+  }));
+  const body = {
+    system_instruction: { parts: [{ text: sys }] },
+    contents,
+    generationConfig: { temperature: 0.7, maxOutputTokens: 1500 }
+  };
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${S.apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Nessuna risposta ricevuta.';
+}
+
+// ─── PROGETTI TAB ─────────────────────────────────────────────────────────────
+const FILE_TYPES = ['Spiegazione','Flashcard','Quiz','Tecniche','Verifiche','Rapporti'];
+const FILE_ICONS = { Spiegazione:'📝', Flashcard:'🃏', Quiz:'❓', Tecniche:'🛠️', Verifiche:'✅', Rapporti:'📊' };
+
+function progettiTabHTML() {
+  const subjects = S.subjects;
+  return `
+  <div class="flex flex-col min-h-full">
+    <div class="flex items-center justify-between px-4 pt-12 pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
+      <div class="text-xl font-bold text-[#0d1b2a]">Progetti</div>
+      <div class="flex gap-2">
+        <button id="addSubjectBtn" class="text-xs bg-[#2e86ab] text-white rounded-lg px-3 py-1.5 active:opacity-80">+ Materia</button>
+        <button id="settingsGear" class="w-9 h-9 flex items-center justify-center text-gray-400 text-lg rounded-full active:bg-gray-100">⚙️</button>
+      </div>
+    </div>
+    ${S.addingSubject ? `
+    <div class="px-4 py-3 bg-blue-50 border-b border-blue-100">
+      <div class="text-sm font-medium text-[#0d1b2a] mb-2">Nuova materia</div>
+      <div class="flex gap-2">
+        <input id="newSubjectInput" placeholder="Es. Matematica, Storia..." class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#2e86ab]" />
+        <button id="confirmSubjectBtn" class="bg-[#2e86ab] text-white rounded-xl px-4 py-2 text-sm active:opacity-80">OK</button>
+        <button id="cancelSubjectBtn" class="bg-gray-100 text-gray-600 rounded-xl px-3 py-2 text-sm active:opacity-80">✕</button>
+      </div>
+    </div>` : ''}
+    <div class="flex-1 overflow-y-auto px-4 py-4">
+      ${subjects.length === 0 ? `<div class="text-center py-16 text-gray-400"><div class="text-4xl mb-3">📚</div><div class="text-sm">Nessuna materia ancora.<br>Aggiungi la prima!</div></div>` : ''}
+      ${subjects.map((subj, si) => subjectCard(subj, si)).join('')}
+    </div>
+  </div>`;
+}
+
+function subjectCard(subj, si) {
+  const open = subj._open;
+  return `
+  <div class="mb-4 bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+    <div class="flex items-center px-4 py-3.5 cursor-pointer active:bg-gray-50" data-toggle-subj="${si}">
+      <span class="text-lg mr-3">📚</span>
+      <span class="flex-1 font-semibold text-[#0d1b2a]">${escHtml(subj.name)}</span>
+      <span class="text-xs text-gray-400 mr-3">${subj.topics.length} argomenti</span>
+      <button data-del-subj="${si}" class="text-gray-300 text-sm mr-2 active:text-red-400 p-1">🗑</button>
+      <span class="text-gray-400 text-sm">${open ? '▲' : '▼'}</span>
+    </div>
+    ${open ? `
+    <div class="border-t border-gray-100 px-4 py-3">
+      ${subj.topics.map((t, ti) => topicRow(t, si, ti)).join('')}
+      ${subj._addingTopic ? `
+      <div class="mt-2 flex gap-2">
+        <input id="newTopicInput_${si}" placeholder="Nuovo argomento..." class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-[#2e86ab]" />
+        <button data-confirm-topic="${si}" class="bg-[#52b788] text-white rounded-xl px-3 py-2 text-sm active:opacity-80">OK</button>
+        <button data-cancel-topic="${si}" class="bg-gray-100 text-gray-600 rounded-xl px-2 py-2 text-sm active:opacity-80">✕</button>
+      </div>` : `
+      <button data-add-topic="${si}" class="mt-2 text-sm text-[#2e86ab] flex items-center gap-1 py-1 active:opacity-60">
+        <span class="text-base">+</span> Aggiungi argomento
+      </button>`}
+    </div>` : ''}
+  </div>`;
+}
+
+function topicRow(topic, si, ti) {
+  const open = topic._open;
+  return `
+  <div class="mb-2">
+    <div class="flex items-center py-2 cursor-pointer active:opacity-70" data-toggle-topic="${si}-${ti}">
+      <span class="text-sm mr-2">📄</span>
+      <span class="flex-1 text-sm font-medium text-[#0d1b2a]">${escHtml(topic.name)}</span>
+      <button data-del-topic="${si}-${ti}" class="text-gray-300 text-xs mr-2 active:text-red-400 p-1">🗑</button>
+      <span class="text-gray-400 text-xs">${open ? '▲' : '▼'}</span>
+    </div>
+    ${open ? `
+    <div class="ml-5 grid grid-cols-2 gap-2 mt-1 mb-2">
+      ${FILE_TYPES.map(ft => `
+      <button data-file-action="${si}-${ti}-${ft}" class="flex items-center gap-2 text-left bg-gray-50 rounded-xl px-3 py-2.5 text-xs active:bg-[#2e86ab] active:text-white border border-gray-100">
+        <span>${FILE_ICONS[ft]}</span><span class="font-medium">${ft}</span>
+      </button>`).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
+function bindProgetti() {
+  document.getElementById('addSubjectBtn')?.addEventListener('click', () => { S.addingSubject = true; render(); setTimeout(() => document.getElementById('newSubjectInput')?.focus(), 50); });
+  document.getElementById('confirmSubjectBtn')?.addEventListener('click', confirmAddSubject);
+  document.getElementById('cancelSubjectBtn')?.addEventListener('click', () => { S.addingSubject = false; render(); });
+  document.getElementById('newSubjectInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') confirmAddSubject(); });
+
+  document.querySelectorAll('[data-toggle-subj]').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('[data-del-subj]')) return;
+      const si = +el.dataset.toggleSubj;
+      S.subjects[si]._open = !S.subjects[si]._open;
+      save(); render();
+    });
+  });
+  document.querySelectorAll('[data-del-subj]').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); const si = +el.dataset.delSubj; if (confirm('Eliminare materia?')) { S.subjects.splice(si,1); save(); render(); } });
+  });
+  document.querySelectorAll('[data-toggle-topic]').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('[data-del-topic]')) return;
+      const [si,ti] = el.dataset.toggleTopic.split('-').map(Number);
+      S.subjects[si].topics[ti]._open = !S.subjects[si].topics[ti]._open;
+      save(); render();
+    });
+  });
+  document.querySelectorAll('[data-del-topic]').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); const [si,ti] = el.dataset.delTopic.split('-').map(Number); if (confirm('Eliminare argomento?')) { S.subjects[si].topics.splice(ti,1); save(); render(); } });
+  });
+  document.querySelectorAll('[data-add-topic]').forEach(el => {
+    el.addEventListener('click', () => { const si = +el.dataset.addTopic; S.subjects[si]._addingTopic = true; render(); setTimeout(() => document.getElementById(`newTopicInput_${si}`)?.focus(), 50); });
+  });
+  document.querySelectorAll('[data-confirm-topic]').forEach(el => {
+    el.addEventListener('click', () => {
+      const si = +el.dataset.confirmTopic;
+      const inp = document.getElementById(`newTopicInput_${si}`);
+      const name = inp?.value.trim();
+      if (name) { S.subjects[si].topics.push({ name, _open: false }); S.subjects[si]._addingTopic = false; save(); render(); }
+    });
+  });
+  document.querySelectorAll('[data-cancel-topic]').forEach(el => {
+    el.addEventListener('click', () => { const si = +el.dataset.cancelTopic; S.subjects[si]._addingTopic = false; render(); });
+  });
+  document.querySelectorAll('[data-file-action]').forEach(el => {
+    el.addEventListener('click', () => {
+      const [si,ti,ft] = el.dataset.fileAction.split('-');
+      const topic = S.subjects[+si].topics[+ti].name;
+      handleFileAction(topic, ft);
+    });
+  });
+}
+
+function confirmAddSubject() {
+  const inp = document.getElementById('newSubjectInput');
+  const name = inp?.value.trim();
+  if (name) { S.subjects.push({ name, topics: [], _open: true }); S.addingSubject = false; save(); render(); }
+}
+
+function handleFileAction(topic, ft) {
+  if (ft === 'Spiegazione' || ft === 'Tecniche' || ft === 'Rapporti') {
+    S.tab = 'chat';
+    S.currentSession = null;
+    render();
+    setTimeout(() => sendMessage(`Voglio capire "${topic}" con il metodo Feynman`), 100);
+  } else if (ft === 'Flashcard' || ft === 'Quiz' || ft === 'Verifiche') {
+    const modeMap = { Flashcard: 'flashcard', Quiz: 'multipla', Verifiche: 'aperta' };
+    S.tab = 'play';
+    S.playTopic = topic;
+    S.playMode = modeMap[ft];
+    S.playItems = [];
+    S.playIndex = 0;
+    S.playScore = 0;
+    S.playDone = false;
+    S.playLoading = false;
+    S.playFlipped = false;
+    S.playSelected = null;
+    render();
+    setTimeout(() => startPlay(), 100);
+  } else {
+    S.tab = 'chat';
+    S.currentSession = null;
+    render();
+    setTimeout(() => sendMessage(`Voglio studiare "${topic}" con il metodo Feynman`), 100);
+  }
+}
+
+// ─── PLAY TAB ─────────────────────────────────────────────────────────────────
+function playTabHTML() {
+  if (S.playLoading) return `
+    <div class="flex flex-col min-h-full items-center justify-center px-6">
+      <div class="text-4xl mb-4">🎮</div>
+      <div class="text-lg font-semibold text-[#0d1b2a] mb-2">Generando domande...</div>
+      <div class="dot-anim flex gap-2 mt-2"><span class="w-3 h-3 bg-[#2e86ab] rounded-full inline-block"></span><span class="w-3 h-3 bg-[#2e86ab] rounded-full inline-block"></span><span class="w-3 h-3 bg-[#2e86ab] rounded-full inline-block"></span></div>
+    </div>`;
+
+  if (S.playDone) return playScoreHTML();
+  if (S.playItems.length > 0) return playGameHTML();
+  return playSetupHTML();
+}
+
+function playSetupHTML() {
+  const modes = [
+    { id:'flashcard', icon:'🃏', label:'Flashcard' },
+    { id:'verofalso', icon:'✔️', label:'Vero / Falso' },
+    { id:'multipla', icon:'📋', label:'Scelta multipla' },
+    { id:'aperta', icon:'✍️', label:'Risposta aperta' },
+  ];
+  return `
+  <div class="flex flex-col min-h-full">
+    <div class="flex items-center justify-between px-4 pt-12 pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
+      <div class="text-xl font-bold text-[#0d1b2a]">Play</div>
+      <button id="settingsGear" class="w-9 h-9 flex items-center justify-center text-gray-400 text-lg rounded-full active:bg-gray-100">⚙️</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-4 py-6">
+      <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Argomento</div>
+      <input id="playTopicInput" placeholder="Es. Fotosintesi, Prima guerra mondiale..." class="w-full border border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-[#2e86ab] mb-6" value="${escHtml(S.playTopic)}" />
+      <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Modalità</div>
+      <div class="grid grid-cols-2 gap-3 mb-8">
+        ${modes.map(m => `
+        <button data-mode="${m.id}" class="play-mode-btn flex flex-col items-center justify-center gap-2 border-2 rounded-2xl py-5 px-3 active:opacity-70 ${S.playMode === m.id ? 'border-[#2e86ab] bg-blue-50 text-[#2e86ab]' : 'border-gray-100 text-gray-600'}">
+          <span class="text-3xl">${m.icon}</span>
+          <span class="text-sm font-semibold">${m.label}</span>
+        </button>`).join('')}
+      </div>
+      <button id="startPlayBtn" class="w-full bg-[#52b788] text-white rounded-xl py-3.5 text-base font-semibold active:opacity-80">Inizia →</button>
+    </div>
+  </div>`;
+}
+
+function playGameHTML() {
+  const item = S.playItems[S.playIndex];
+  const total = S.playItems.length;
+  const prog = Math.round(((S.playIndex) / total) * 100);
+  return `
+  <div class="flex flex-col min-h-full">
+    <div class="px-4 pt-12 pb-3 border-b border-gray-100 bg-white sticky top-0 z-10">
+      <div class="flex items-center justify-between mb-2">
+        <button id="stopPlayBtn" class="text-sm text-gray-400 active:text-gray-600">✕ Stop</button>
+        <span class="text-sm font-medium text-gray-500">${S.playIndex + 1} / ${total}</span>
+        <span class="text-sm font-semibold text-[#52b788]">★ ${S.playScore}</span>
+      </div>
+      <div class="w-full bg-gray-100 rounded-full h-2"><div class="bg-[#2e86ab] h-2 rounded-full transition-all" style="width:${prog}%"></div></div>
+    </div>
+    <div class="flex-1 overflow-y-auto px-4 py-6">
+      ${S.playMode === 'flashcard' ? flashcardHTML(item) : ''}
+      ${S.playMode === 'verofalso' ? veroFalsoHTML(item) : ''}
+      ${S.playMode === 'multipla' ? multiplaHTML(item) : ''}
+      ${S.playMode === 'aperta' ? apertaHTML(item) : ''}
+    </div>
+  </div>`;
+}
+
+function flashcardHTML(item) {
+  return `
+  <div class="flip-card w-full" style="height:260px">
+    <div class="flip-inner w-full h-full relative ${S.playFlipped ? 'flipped' : ''}">
+      <div class="flip-front absolute inset-0 bg-white border-2 border-[#2e86ab] rounded-2xl flex flex-col items-center justify-center px-6 cursor-pointer" id="flipCardEl">
+        <div class="text-xs text-gray-400 mb-3 uppercase tracking-wide">Domanda</div>
+        <div class="text-base font-semibold text-[#0d1b2a] text-center">${escHtml(item.question)}</div>
+        <div class="text-xs text-gray-400 mt-4">Tocca per girare</div>
+      </div>
+      <div class="flip-back absolute inset-0 bg-[#2e86ab] rounded-2xl flex flex-col items-center justify-center px-6 cursor-pointer" id="flipCardEl2">
+        <div class="text-xs text-white/70 mb-3 uppercase tracking-wide">Risposta</div>
+        <div class="text-base font-semibold text-white text-center">${escHtml(item.answer)}</div>
+      </div>
+    </div>
+  </div>
+  ${S.playFlipped ? `
+  <div class="mt-6 grid grid-cols-2 gap-3">
+    <button id="noBtn" class="bg-red-50 border border-red-200 text-red-500 rounded-2xl py-4 text-sm font-semibold active:bg-red-100">😕 Non lo sapevo</button>
+    <button id="yesBtn" class="bg-green-50 border border-green-200 text-[#52b788] rounded-2xl py-4 text-sm font-semibold active:bg-green-100">🎉 Lo sapevo!</button>
+  </div>` : ''}`;
+}
+
+function veroFalsoHTML(item) {
+  const answered = S.playSelected !== null;
+  const correct = answered && (S.playSelected === item.answer);
+  return `
+  <div class="bg-gray-50 rounded-2xl px-5 py-6 mb-6 text-center">
+    <div class="text-xs text-gray-400 mb-3 uppercase tracking-wide">Vero o Falso?</div>
+    <div class="text-base font-semibold text-[#0d1b2a]">${escHtml(item.question)}</div>
+  </div>
+  ${answered ? `<div class="text-center mb-4 text-sm font-semibold ${correct ? 'text-[#52b788]' : 'text-red-500'}">${correct ? '✅ Corretto!' : '❌ Sbagliato!'}</div>
+  <div class="bg-blue-50 rounded-xl px-4 py-3 text-sm text-gray-700 mb-6">${escHtml(item.explanation || '')}</div>
+  <button id="nextPlayBtn" class="w-full bg-[#2e86ab] text-white rounded-xl py-3.5 font-semibold active:opacity-80">${S.playIndex + 1 < S.playItems.length ? 'Avanti →' : 'Fine!'}</button>` :
+  `<div class="grid grid-cols-2 gap-4">
+    <button data-vf="true" class="vf-btn bg-green-50 border border-green-200 text-[#52b788] rounded-2xl py-5 text-base font-bold active:bg-green-100">✔ Vero</button>
+    <button data-vf="false" class="vf-btn bg-red-50 border border-red-200 text-red-400 rounded-2xl py-5 text-base font-bold active:bg-red-100">✘ Falso</button>
+  </div>`}`;
+}
+
+function multiplaHTML(item) {
+  const answered = S.playSelected !== null;
+  const opts = item.options || [];
+  return `
+  <div class="bg-gray-50 rounded-2xl px-5 py-5 mb-5">
+    <div class="text-xs text-gray-400 mb-2 uppercase tracking-wide">Scelta multipla</div>
+    <div class="text-base font-semibold text-[#0d1b2a]">${escHtml(item.question)}</div>
+  </div>
+  <div class="space-y-3">
+    ${opts.map((opt, i) => {
+      const label = ['A','B','C','D'][i];
+      let cls = 'border border-gray-200 bg-white text-[#0d1b2a]';
+      if (answered) {
+        if (i === item.correct) cls = 'border-[#52b788] bg-green-50 text-[#52b788]';
+        else if (i === S.playSelected) cls = 'border-red-300 bg-red-50 text-red-500';
+        else cls = 'border-gray-100 bg-gray-50 text-gray-400';
+      }
+      return `<button data-opt="${i}" class="mc-opt w-full text-left flex items-center gap-3 rounded-xl px-4 py-3.5 text-sm active:opacity-70 ${cls} ${answered ? 'pointer-events-none' : ''}">
+        <span class="font-bold w-6">${label}</span><span>${escHtml(opt)}</span>
+      </button>`;
+    }).join('')}
+  </div>
+  ${answered ? `<div class="mt-4 bg-blue-50 rounded-xl px-4 py-3 text-sm text-gray-700">${escHtml(item.explanation || '')}</div>
+  <button id="nextPlayBtn" class="w-full mt-4 bg-[#2e86ab] text-white rounded-xl py-3.5 font-semibold active:opacity-80">${S.playIndex + 1 < S.playItems.length ? 'Avanti →' : 'Fine!'}</button>` : ''}`;
+}
+
+function apertaHTML(item) {
+  const answered = S.playSelected !== null;
+  return `
+  <div class="bg-gray-50 rounded-2xl px-5 py-5 mb-5">
+    <div class="text-xs text-gray-400 mb-2 uppercase tracking-wide">Risposta aperta</div>
+    <div class="text-base font-semibold text-[#0d1b2a]">${escHtml(item.question)}</div>
+  </div>
+  ${!answered ? `
+  <textarea id="openAnswer" placeholder="Scrivi la tua risposta..." rows="4" class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-[#2e86ab] resize-none mb-4"></textarea>
+  <button id="showAnswerBtn" class="w-full bg-[#2e86ab] text-white rounded-xl py-3.5 font-semibold active:opacity-80">Mostra risposta</button>` :
+  `<div class="mb-3 text-sm text-gray-500 font-medium">Risposta corretta:</div>
+  <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-[#0d1b2a] mb-4">${escHtml(item.answer)}</div>
+  <div class="grid grid-cols-2 gap-3">
+    <button id="noBtn" class="bg-red-50 border border-red-200 text-red-500 rounded-2xl py-3.5 text-sm font-semibold active:bg-red-100">😕 Non lo sapevo</button>
+    <button id="yesBtn" class="bg-green-50 border border-green-200 text-[#52b788] rounded-2xl py-3.5 text-sm font-semibold active:bg-green-100">🎉 Lo sapevo!</button>
+  </div>`}`;
+}
+
+function playScoreHTML() {
+  const total = S.playItems.length;
+  const pct = total ? Math.round((S.playScore/total)*100) : 0;
+  const emoji = pct >= 80 ? '🏆' : pct >= 50 ? '👍' : '💪';
+  return `
+  <div class="flex flex-col min-h-full items-center justify-center px-6 text-center">
+    <div class="text-6xl mb-4">${emoji}</div>
+    <div class="text-2xl font-bold text-[#0d1b2a] mb-2">${S.playScore} / ${total}</div>
+    <div class="text-sm text-gray-500 mb-8">${pct}% corretto — ${pct >= 80 ? 'Ottimo lavoro!' : pct >= 50 ? 'Buon risultato!' : 'Continua ad esercitarti!'}</div>
+    <button id="playAgainBtn" class="w-full max-w-xs bg-[#2e86ab] text-white rounded-xl py-3.5 font-semibold active:opacity-80 mb-3">Gioca ancora</button>
+    <button id="playNewBtn" class="w-full max-w-xs bg-gray-100 text-gray-600 rounded-xl py-3.5 font-semibold active:opacity-80">Nuovo argomento</button>
+  </div>`;
+}
+
+function bindPlay() {
+  document.querySelectorAll('.play-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => { S.playMode = btn.dataset.mode; render(); });
+  });
+  document.getElementById('startPlayBtn')?.addEventListener('click', () => {
+    const topicInput = document.getElementById('playTopicInput');
+    if (topicInput) S.playTopic = topicInput.value.trim();
+    if (!S.playTopic) { alert('Inserisci un argomento'); return; }
+    if (!S.playMode) { alert('Scegli una modalità'); return; }
+    startPlay();
+  });
+  document.getElementById('stopPlayBtn')?.addEventListener('click', () => {
+    S.playItems = []; S.playIndex = 0; S.playScore = 0; S.playDone = false; S.playFlipped = false; S.playSelected = null; render();
+  });
+  const flipFn = () => { S.playFlipped = !S.playFlipped; render(); };
+  document.getElementById('flipCardEl')?.addEventListener('click', flipFn);
+  document.getElementById('flipCardEl2')?.addEventListener('click', flipFn);
+  document.getElementById('yesBtn')?.addEventListener('click', () => { S.playScore++; nextPlayItem(); });
+  document.getElementById('noBtn')?.addEventListener('click', () => { nextPlayItem(); });
+  document.getElementById('nextPlayBtn')?.addEventListener('click', () => nextPlayItem());
+  document.getElementById('showAnswerBtn')?.addEventListener('click', () => { S.playSelected = true; render(); });
+  document.querySelectorAll('.vf-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.vf === 'true';
+      S.playSelected = val;
+      const item = S.playItems[S.playIndex];
+      if (val === item.answer) S.playScore++;
+      render();
+    });
+  });
+  document.querySelectorAll('.mc-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = +btn.dataset.opt;
+      S.playSelected = i;
+      const item = S.playItems[S.playIndex];
+      if (i === item.correct) S.playScore++;
+      render();
+    });
+  });
+  document.getElementById('playAgainBtn')?.addEventListener('click', () => {
+    S.playItems = []; S.playIndex = 0; S.playScore = 0; S.playDone = false; S.playFlipped = false; S.playSelected = null; render(); setTimeout(() => startPlay(), 50);
+  });
+  document.getElementById('playNewBtn')?.addEventListener('click', () => {
+    S.playTopic = ''; S.playMode = null; S.playItems = []; S.playIndex = 0; S.playScore = 0; S.playDone = false; S.playFlipped = false; S.playSelected = null; render();
+  });
+}
+
+function nextPlayItem() {
+  if (S.playIndex + 1 >= S.playItems.length) { S.playDone = true; render(); return; }
+  S.playIndex++;
+  S.playFlipped = false;
+  S.playSelected = null;
+  render();
+}
+
+async function startPlay() {
+  S.playLoading = true;
+  S.playItems = [];
+  S.playIndex = 0;
+  S.playScore = 0;
+  S.playDone = false;
+  S.playFlipped = false;
+  S.playSelected = null;
+  render();
+
+  const modePrompts = {
+    flashcard: `Genera 8 flashcard sull'argomento "${S.playTopic}". Restituisci un JSON array con oggetti {question, answer}. Solo JSON, niente altro.`,
+    verofalso: `Genera 8 domande vero/falso sull'argomento "${S.playTopic}". Restituisci un JSON array con oggetti {question, answer: true/false, explanation}. Solo JSON.`,
+    multipla: `Genera 6 domande a scelta multipla sull'argomento "${S.playTopic}". Restituisci un JSON array con oggetti {question, options: [4 stringhe], correct: indice 0-3, explanation}. Solo JSON.`,
+    aperta: `Genera 5 domande a risposta aperta sull'argomento "${S.playTopic}". Restituisci un JSON array con oggetti {question, answer}. Solo JSON.`,
+  };
+
+  try {
+    const raw = await callGemini([{ role: 'user', content: modePrompts[S.playMode] }],
+      'Sei un generatore di quiz educativi in italiano. Restituisci solo JSON valido, senza markdown, senza code block.');
+    const clean = raw.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
+    const start = clean.indexOf('[');
+    const end = clean.lastIndexOf(']');
+    if (start === -1 || end === -1) throw new Error('JSON non trovato');
+    S.playItems = JSON.parse(clean.slice(start, end+1));
+    if (!Array.isArray(S.playItems) || S.playItems.length === 0) throw new Error('Array vuoto');
+  } catch(e) {
+    S.playLoading = false;
+    S.playItems = [];
+    alert('Errore nel generare domande: ' + e.message + '. Riprova.');
+    render();
+    return;
+  }
+  S.playLoading = false;
+  render();
+}
+
+// ─── MEMORIA TAB ──────────────────────────────────────────────────────────────
+function memoriaTabHTML() {
+  const allTopics = [];
+  S.subjects.forEach(s => s.topics.forEach(t => allTopics.push({ subject: s.name, topic: t.name })));
+  return `
+  <div class="flex flex-col min-h-full">
+    <div class="flex items-center justify-between px-4 pt-12 pb-4 border-b border-gray-100 bg-white sticky top-0 z-10">
+      <div>
+        <div class="text-xl font-bold text-[#0d1b2a]">Memoria</div>
+        <div class="text-sm text-gray-400">Ripasso rapido degli argomenti</div>
+      </div>
+      <button id="settingsGear" class="w-9 h-9 flex items-center justify-center text-gray-400 text-lg rounded-full active:bg-gray-100">⚙️</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-4 py-6">
+      ${allTopics.length === 0 ? `
+      <div class="text-center py-16 text-gray-400">
+        <div class="text-4xl mb-3">🧠</div>
+        <div class="text-sm">Aggiungi argomenti in Progetti<br>per il ripasso rapido</div>
+      </div>` : `
+      <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">I tuoi argomenti</div>
+      <div class="flex flex-wrap gap-2 mb-8">
+        ${allTopics.map(t => `
+        <button class="mem-topic-btn bg-gray-50 border border-gray-200 rounded-full px-4 py-2 text-sm font-medium text-[#0d1b2a] active:bg-[#2e86ab] active:text-white active:border-[#2e86ab]" data-topic="${escHtml(t.topic)}">
+          ${escHtml(t.topic)}
+        </button>`).join('')}
+      </div>
+      <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Per materia</div>
+      ${S.subjects.map(s => s.topics.length > 0 ? `
+      <div class="mb-4">
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">${escHtml(s.name)}</div>
+        <div class="grid grid-cols-1 gap-2">
+          ${s.topics.map(t => `
+          <button class="mem-topic-btn flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-sm text-left active:bg-[#2e86ab] active:text-white" data-topic="${escHtml(t.name)}">
+            <span>🧠</span><span class="font-medium">${escHtml(t.name)}</span>
+          </button>`).join('')}
+        </div>
+      </div>` : '').join('')}`}
+    </div>
+  </div>`;
+}
+
+function bindMemoria() {
+  document.querySelectorAll('.mem-topic-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const topic = btn.dataset.topic;
+      S.tab = 'chat';
+      S.currentSession = null;
+      render();
+      setTimeout(() => sendMessage(`Voglio ripassare "${topic}" con il metodo Feynman. Inizia chiedendomi di spiegartelo.`), 100);
+    });
+  });
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
