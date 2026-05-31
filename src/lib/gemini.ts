@@ -2,7 +2,14 @@ import { SYSTEM_PROMPT } from './systemPrompt';
 
 const API_KEY = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY || '';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'mistralai/mistral-7b-instruct:free';
+const FREE_MODELS = [
+  'google/gemma-2-9b-it:free',
+  'qwen/qwen-2-7b-instruct:free',
+  'microsoft/phi-3-mini-128k-instruct:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'mistralai/mistral-7b-instruct:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+];
 
 // OpenRouter message format (OpenAI-compatible)
 export interface GeminiMessage {
@@ -21,22 +28,33 @@ function toOR(messages: GeminiMessage[]): ORMessage[] {
 
 async function orFetch(messages: ORMessage[]): Promise<string> {
   if (!API_KEY) return '';
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
-      'HTTP-Referer': 'https://feyman-ag01.netlify.app',
-      'X-Title': 'FEYMAN AG01',
-    },
-    body: JSON.stringify({ model: MODEL, messages }),
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`);
+  for (const model of FREE_MODELS) {
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${API_KEY}`,
+          'HTTP-Referer': 'https://feyman-ag01.netlify.app',
+          'X-Title': 'FEYMAN AG01',
+        },
+        body: JSON.stringify({ model, messages }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const msg = (err as { error?: { message?: string } })?.error?.message || '';
+        if (msg.includes('No endpoints found') || msg.includes('not found')) continue;
+        throw new Error(msg || `HTTP ${response.status}`);
+      }
+      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      const text = data.choices?.[0]?.message?.content || '';
+      if (text) return text;
+    } catch (e) {
+      if (e instanceof Error && (e.message.includes('No endpoints') || e.message.includes('not found'))) continue;
+      throw e;
+    }
   }
-  const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-  return data.choices?.[0]?.message?.content || '';
+  throw new Error('Nessun modello disponibile al momento. Riprova tra poco.');
 }
 
 export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
