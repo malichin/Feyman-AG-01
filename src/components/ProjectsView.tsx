@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ChevronRight,
   ChevronDown,
@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FileText,
   Plus,
+  Trash2,
   BookOpen,
   CreditCard,
   HelpCircle,
@@ -15,15 +16,9 @@ import {
   ClipboardCheck,
   TrendingUp,
 } from 'lucide-react';
+import { Subject, getSubjects, saveSubjects, generateId } from '@/lib/storage';
 
-interface TreeItem {
-  id: string;
-  label: string;
-  icon?: React.ReactNode;
-  children?: TreeItem[];
-}
-
-const fileTypes = [
+const FILE_TYPES = [
   { id: 'spiegazione', label: 'Spiegazione', icon: <BookOpen size={14} /> },
   { id: 'flashcard', label: 'Flashcard', icon: <CreditCard size={14} /> },
   { id: 'quiz', label: 'Quiz', icon: <HelpCircle size={14} /> },
@@ -32,68 +27,53 @@ const fileTypes = [
   { id: 'rapporti', label: 'Rapporti', icon: <TrendingUp size={14} /> },
 ];
 
-const SUBJECTS: { id: string; label: string; topics: string[] }[] = [
-  {
-    id: 'matematica',
-    label: 'Matematica',
-    topics: ['Algebra', 'Geometria', 'Calcolo', 'Statistica'],
-  },
-  {
-    id: 'storia',
-    label: 'Storia',
-    topics: ['Storia antica', 'Medioevo', 'Età moderna', 'Storia contemporanea'],
-  },
-  {
-    id: 'scienze',
-    label: 'Scienze',
-    topics: ['Fisica', 'Chimica', 'Biologia', 'Astronomia'],
-  },
-  {
-    id: 'lingue',
-    label: 'Lingue',
-    topics: ['Grammatica', 'Vocabolario', 'Conversazione', 'Letteratura'],
-  },
-  {
-    id: 'arte',
-    label: 'Arte',
-    topics: ['Storia dell\'arte', 'Tecniche pittoriche', 'Scultura', 'Arte moderna'],
-  },
-  {
-    id: 'altro',
-    label: 'Altro',
-    topics: [],
-  },
-];
-
 function FileNode({ label, icon }: { label: string; icon?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-[#f8fafc] cursor-pointer group">
-      <span className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors">{icon || <FileText size={14} />}</span>
+      <span className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors">
+        {icon || <FileText size={14} />}
+      </span>
       <span className="text-xs text-[#64748b] group-hover:text-[#0d1b2a] transition-colors">{label}</span>
     </div>
   );
 }
 
-function TopicNode({ topicId, label }: { topicId: string; label: string }) {
+function TopicNode({
+  label,
+  subjectId,
+  onDelete,
+}: {
+  label: string;
+  subjectId: string;
+  onDelete: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
     <div>
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[#f8fafc] transition-colors text-left"
-      >
-        {open ? (
-          <ChevronDown size={14} className="text-[#64748b] flex-shrink-0" />
-        ) : (
-          <ChevronRight size={14} className="text-[#64748b] flex-shrink-0" />
-        )}
-        <span className="text-sm text-[#0d1b2a]">{label}</span>
-      </button>
+      <div className="flex items-center group">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[#f8fafc] transition-colors text-left"
+        >
+          {open ? (
+            <ChevronDown size={14} className="text-[#64748b] flex-shrink-0" />
+          ) : (
+            <ChevronRight size={14} className="text-[#64748b] flex-shrink-0" />
+          )}
+          <span className="text-sm text-[#0d1b2a]">{label}</span>
+        </button>
+        <button
+          onClick={onDelete}
+          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
       {open && (
         <div className="ml-6 mt-0.5 space-y-0.5">
-          {fileTypes.map((ft) => (
-            <FileNode key={`${topicId}-${ft.id}`} label={ft.label} icon={ft.icon} />
+          {FILE_TYPES.map((ft) => (
+            <FileNode key={`${subjectId}-${label}-${ft.id}`} label={ft.label} icon={ft.icon} />
           ))}
         </div>
       )}
@@ -101,46 +81,70 @@ function TopicNode({ topicId, label }: { topicId: string; label: string }) {
   );
 }
 
-function SubjectNode({ subject }: { subject: typeof SUBJECTS[0] }) {
+function SubjectNode({
+  subject,
+  onUpdateTopics,
+  onDelete,
+}: {
+  subject: Subject;
+  onUpdateTopics: (topics: string[]) => void;
+  onDelete: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [showAddTopic, setShowAddTopic] = useState(false);
   const [newTopic, setNewTopic] = useState('');
-  const [topics, setTopics] = useState(subject.topics);
 
   const handleAddTopic = () => {
-    if (newTopic.trim()) {
-      setTopics([...topics, newTopic.trim()]);
-      setNewTopic('');
-      setShowAddTopic(false);
-    }
+    const name = newTopic.trim();
+    if (!name) return;
+    onUpdateTopics([...subject.topics, name]);
+    setNewTopic('');
+    setShowAddTopic(false);
+  };
+
+  const handleDeleteTopic = (index: number) => {
+    onUpdateTopics(subject.topics.filter((_, i) => i !== index));
   };
 
   return (
     <div className="mb-1">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl hover:bg-[#f8fafc] transition-colors text-left group"
-      >
-        {open ? (
-          <FolderOpen size={16} className="text-[#2e86ab] flex-shrink-0" />
-        ) : (
-          <Folder size={16} className="text-[#64748b] flex-shrink-0" />
-        )}
-        <span className="text-sm font-medium text-[#0d1b2a] flex-1">{subject.label}</span>
-        {open ? (
-          <ChevronDown size={14} className="text-[#64748b]" />
-        ) : (
-          <ChevronRight size={14} className="text-[#64748b]" />
-        )}
-      </button>
+      <div className="flex items-center group">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl hover:bg-[#f8fafc] transition-colors text-left"
+        >
+          {open ? (
+            <FolderOpen size={16} className="text-[#2e86ab] flex-shrink-0" />
+          ) : (
+            <Folder size={16} className="text-[#64748b] flex-shrink-0" />
+          )}
+          <span className="text-sm font-medium text-[#0d1b2a] flex-1">{subject.label}</span>
+          {open ? (
+            <ChevronDown size={14} className="text-[#64748b]" />
+          ) : (
+            <ChevronRight size={14} className="text-[#64748b]" />
+          )}
+        </button>
+        <button
+          onClick={onDelete}
+          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
 
       {open && (
         <div className="ml-4 mt-0.5 border-l border-[#e2e8f0] pl-2 space-y-0.5">
-          {topics.map((topic) => (
+          {subject.topics.length === 0 && !showAddTopic && (
+            <p className="text-xs text-[#94a3b8] px-3 py-2">Nessun argomento — aggiungine uno</p>
+          )}
+
+          {subject.topics.map((topic, i) => (
             <TopicNode
-              key={`${subject.id}-${topic}`}
-              topicId={`${subject.id}-${topic}`}
+              key={`${subject.id}-${i}`}
               label={topic}
+              subjectId={subject.id}
+              onDelete={() => handleDeleteTopic(i)}
             />
           ))}
 
@@ -163,6 +167,12 @@ function SubjectNode({ subject }: { subject: typeof SUBJECTS[0] }) {
               >
                 OK
               </button>
+              <button
+                onClick={() => setShowAddTopic(false)}
+                className="text-xs text-[#64748b] hover:text-[#0d1b2a]"
+              >
+                ✕
+              </button>
             </div>
           ) : (
             <button
@@ -180,21 +190,33 @@ function SubjectNode({ subject }: { subject: typeof SUBJECTS[0] }) {
 }
 
 export default function ProjectsView() {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [newSubject, setNewSubject] = useState('');
-  const [customSubjects, setCustomSubjects] = useState<typeof SUBJECTS>([]);
 
-  const allSubjects = [...SUBJECTS, ...customSubjects];
+  useEffect(() => {
+    setSubjects(getSubjects());
+  }, []);
+
+  const persist = (updated: Subject[]) => {
+    setSubjects(updated);
+    saveSubjects(updated);
+  };
 
   const handleAddSubject = () => {
-    if (newSubject.trim()) {
-      setCustomSubjects([
-        ...customSubjects,
-        { id: `custom-${Date.now()}`, label: newSubject.trim(), topics: [] },
-      ]);
-      setNewSubject('');
-      setShowAddSubject(false);
-    }
+    const name = newSubject.trim();
+    if (!name) return;
+    persist([...subjects, { id: generateId(), label: name, topics: [] }]);
+    setNewSubject('');
+    setShowAddSubject(false);
+  };
+
+  const handleDeleteSubject = (id: string) => {
+    persist(subjects.filter((s) => s.id !== id));
+  };
+
+  const handleUpdateTopics = (id: string, topics: string[]) => {
+    persist(subjects.map((s) => (s.id === id ? { ...s, topics } : s)));
   };
 
   return (
@@ -207,12 +229,24 @@ export default function ProjectsView() {
           </p>
         </div>
 
+        {subjects.length === 0 && !showAddSubject && (
+          <div className="text-center py-16">
+            <Folder size={32} className="text-[#e2e8f0] mx-auto mb-3" />
+            <p className="text-sm text-[#64748b]">Nessuna materia ancora.</p>
+            <p className="text-xs text-[#94a3b8] mt-1">Crea la tua prima materia qui sotto.</p>
+          </div>
+        )}
+
         <div className="space-y-0.5">
-          {allSubjects.map((subject) => (
-            <SubjectNode key={subject.id} subject={subject} />
+          {subjects.map((subject) => (
+            <SubjectNode
+              key={subject.id}
+              subject={subject}
+              onUpdateTopics={(topics) => handleUpdateTopics(subject.id, topics)}
+              onDelete={() => handleDeleteSubject(subject.id)}
+            />
           ))}
 
-          {/* Add subject */}
           {showAddSubject ? (
             <div className="flex items-center gap-2 px-4 py-2.5">
               <input
@@ -234,7 +268,7 @@ export default function ProjectsView() {
               </button>
               <button
                 onClick={() => setShowAddSubject(false)}
-                className="text-sm text-[#64748b] hover:text-[#0d1b2a] transition-colors"
+                className="text-sm text-[#64748b] hover:text-[#0d1b2a]"
               >
                 Annulla
               </button>

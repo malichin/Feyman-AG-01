@@ -158,6 +158,30 @@ export function saveProgress(entry: ProgressEntry): void {
   }
 }
 
+// Subjects
+export interface Subject {
+  id: string;
+  label: string;
+  topics: string[];
+}
+
+export function getSubjects(): Subject[] {
+  if (!isClient()) return [];
+  try {
+    const raw = localStorage.getItem('feyman_subjects');
+    return raw ? (JSON.parse(raw) as Subject[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveSubjects(subjects: Subject[]): void {
+  if (!isClient()) return;
+  try {
+    localStorage.setItem('feyman_subjects', JSON.stringify(subjects));
+  } catch {}
+}
+
 export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
