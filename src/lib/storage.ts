@@ -158,6 +158,22 @@ export function saveProgress(entry: ProgressEntry): void {
   }
 }
 
+// API Key (BYOK)
+export function getApiKey(): string {
+  if (!isClient()) return '';
+  return localStorage.getItem('feyman_api_key') || '';
+}
+
+export function saveApiKey(key: string): void {
+  if (!isClient()) return;
+  localStorage.setItem('feyman_api_key', key.trim());
+}
+
+export function clearApiKey(): void {
+  if (!isClient()) return;
+  localStorage.removeItem('feyman_api_key');
+}
+
 // Subjects
 export interface Subject {
   id: string;

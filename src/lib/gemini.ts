@@ -1,20 +1,33 @@
 import { SYSTEM_PROMPT } from './systemPrompt';
+import { getApiKey } from './storage';
 
-const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${API_KEY}`;
-const RAW_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=`;
+const BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=`;
+
+function getKey(): string {
+  return getApiKey() || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+}
 
 export interface GeminiMessage {
   role: string;
   parts: { text: string }[];
 }
 
-export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
-  if (!API_KEY) {
-    return 'Chiave API mancante. Aggiungi NEXT_PUBLIC_GEMINI_API_KEY nelle variabili di Netlify.';
-  }
+export async function validateKey(key: string): Promise<boolean> {
   try {
-    const response = await fetch(API_URL, {
+    const response = await fetch(`${BASE_URL}${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Ciao' }] }] }),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
+  const key = getKey();
+  if (!key) return 'Chiave API mancante. Configura la tua chiave nelle impostazioni.';
+  try {
+    const response = await fetch(`${BASE_URL}${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -36,9 +49,10 @@ export async function sendMessage(messages: GeminiMessage[]): Promise<string> {
 }
 
 async function rawGenerate(prompt: string): Promise<string> {
-  if (!API_KEY) return '';
+  const key = getKey();
+  if (!key) return '';
   try {
-    const response = await fetch(`${RAW_URL}${API_KEY}`, {
+    const response = await fetch(`${BASE_URL}${key}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),

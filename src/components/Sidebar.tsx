@@ -27,7 +27,7 @@ const navItems: NavItem[] = [
   { id: 'progress', label: 'Progressi', icon: <BarChart3 size={18} /> },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onSettingsOpen }: { onSettingsOpen?: () => void }) {
   const { currentView, setCurrentView, sessions, sidebarOpen, setSidebarOpen, startNewSession, loadSession } =
     useApp();
 
@@ -76,8 +76,9 @@ export default function Sidebar() {
           </button>
           <div className="flex items-center gap-1">
             <button
+              onClick={onSettingsOpen}
               className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#f8fafc] text-[#64748b] transition-colors"
-              title="Profilo"
+              title="Impostazioni API"
             >
               <User size={16} />
             </button>
