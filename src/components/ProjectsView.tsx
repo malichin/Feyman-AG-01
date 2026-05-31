@@ -65,7 +65,7 @@ function TopicNode({
         </button>
         <button
           onClick={onDelete}
-          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
+          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
         >
           <Trash2 size={13} />
         </button>
@@ -127,7 +127,7 @@ function SubjectNode({
         </button>
         <button
           onClick={onDelete}
-          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
+          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1.5 rounded-lg hover:bg-[#fee2e2] text-[#94a3b8] hover:text-[#ef4444] transition-all mr-1"
         >
           <Trash2 size={15} />
         </button>
