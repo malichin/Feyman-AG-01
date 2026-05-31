@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronRight, ArrowLeft } from 'lucide-react';
+import { getSubjects, Subject } from '@/lib/storage';
 
-type FilterStep = 'scope' | 'subject' | 'technique';
-type Scope = '1' | '2' | '3';
+type FilterStep = 'topic' | 'technique';
 
-const SUBJECTS = ['Matematica', 'Storia', 'Scienze', 'Lingue', 'Arte', 'Altro'];
 
 const TECHNIQUES = [
   {
@@ -156,29 +155,16 @@ function TechniqueDetail({ technique }: { technique: typeof TECHNIQUES[0]; onBac
 }
 
 export default function MemoryView() {
-  const [step, setStep] = useState<FilterStep>('scope');
-  const [scope, setScope] = useState<Scope | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [step, setStep] = useState<FilterStep>('topic');
+  const [topicInput, setTopicInput] = useState('');
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedTechnique, setSelectedTechnique] = useState<typeof TECHNIQUES[0] | null>(null);
 
-  const handleScopeSelect = (s: Scope) => {
-    setScope(s);
-    if (s === '1') {
-      setStep('subject');
-    } else {
-      setStep('technique');
-    }
-  };
-
-  const handleSubjectSelect = (subj: string) => {
-    setSelectedSubject(subj);
-    setStep('technique');
-  };
+  useEffect(() => { setSubjects(getSubjects()); }, []);
 
   const reset = () => {
-    setStep('scope');
-    setScope(null);
-    setSelectedSubject(null);
+    setStep('topic');
+    setTopicInput('');
     setSelectedTechnique(null);
   };
 
@@ -190,67 +176,67 @@ export default function MemoryView() {
           <p className="text-sm text-[#64748b] mt-1">Tecniche per ricordare meglio e più a lungo.</p>
         </div>
 
-        {step === 'scope' && (
+        {step === 'topic' && (
           <div>
-            <p className="text-sm text-[#64748b] mb-4">Stai studiando:</p>
-            <div className="space-y-2">
-              {[
-                { id: '1' as Scope, label: 'Un argomento specifico' },
-                { id: '2' as Scope, label: 'Una materia intera' },
-                { id: '3' as Scope, label: 'Tutte le materie insieme' },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => handleScopeSelect(item.id)}
-                  className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl border border-[#e2e8f0] hover:border-[#2e86ab] hover:bg-[#f0f8ff] transition-all text-left group"
-                >
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm font-semibold text-[#2e86ab]">{item.id}</span>
-                    <span className="text-sm text-[#0d1b2a]">{item.label}</span>
-                  </div>
-                  <ChevronRight size={16} className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+            <p className="text-sm text-[#64748b] mb-3">Su cosa vuoi lavorare?</p>
 
-        {step === 'subject' && (
-          <div>
+            {/* Quick pick from saved subjects */}
+            {subjects.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {subjects.flatMap((s) =>
+                  s.topics.length > 0
+                    ? s.topics.map((t) => (
+                        <button
+                          key={`${s.id}-${t}`}
+                          onClick={() => { setTopicInput(t); setStep('technique'); }}
+                          className="px-3 py-1.5 rounded-full border border-[#e2e8f0] text-xs text-[#0d1b2a] hover:border-[#2e86ab] hover:bg-[#f0f8ff] transition-all"
+                        >
+                          {t}
+                        </button>
+                      ))
+                    : [
+                        <button
+                          key={s.id}
+                          onClick={() => { setTopicInput(s.label); setStep('technique'); }}
+                          className="px-3 py-1.5 rounded-full border border-[#e2e8f0] text-xs text-[#0d1b2a] hover:border-[#2e86ab] hover:bg-[#f0f8ff] transition-all"
+                        >
+                          {s.label}
+                        </button>,
+                      ]
+                )}
+              </div>
+            )}
+
+            <input
+              value={topicInput}
+              onChange={(e) => setTopicInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && topicInput.trim() && setStep('technique')}
+              placeholder="Es. Le frazioni, La Rivoluzione Francese…"
+              className="w-full border border-[#e2e8f0] rounded-xl px-4 py-3 text-sm text-[#0d1b2a] outline-none focus:border-[#2e86ab] bg-white"
+            />
             <button
-              onClick={() => setStep('scope')}
-              className="flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0d1b2a] mb-4 transition-colors"
+              onClick={() => topicInput.trim() && setStep('technique')}
+              disabled={!topicInput.trim()}
+              className="mt-3 w-full py-3 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] disabled:opacity-40 transition-colors"
             >
-              <ArrowLeft size={15} />
-              Indietro
+              Scegli tecnica →
             </button>
-            <p className="text-sm text-[#64748b] mb-4">Scegli la materia:</p>
-            <div className="space-y-2">
-              {SUBJECTS.map((subj) => (
-                <button
-                  key={subj}
-                  onClick={() => handleSubjectSelect(subj)}
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-[#e2e8f0] hover:border-[#2e86ab] hover:bg-[#f0f8ff] transition-all text-left group"
-                >
-                  <span className="text-sm text-[#0d1b2a]">{subj}</span>
-                  <ChevronRight size={16} className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors" />
-                </button>
-              ))}
-            </div>
           </div>
         )}
 
         {step === 'technique' && !selectedTechnique && (
           <div>
             <button
-              onClick={() => setStep(scope === '1' ? 'subject' : 'scope')}
+              onClick={() => setStep('topic')}
               className="flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0d1b2a] mb-4 transition-colors"
             >
               <ArrowLeft size={15} />
               Indietro
             </button>
-            {selectedSubject && (
-              <p className="text-sm text-[#64748b] mb-4">Materia: <span className="font-medium text-[#0d1b2a]">{selectedSubject}</span></p>
+            {topicInput && (
+              <p className="text-sm text-[#64748b] mb-4">
+                Argomento: <span className="font-medium text-[#0d1b2a]">{topicInput}</span>
+              </p>
             )}
             <p className="text-sm text-[#64748b] mb-4">Scegli una tecnica:</p>
             <div className="space-y-2">
@@ -262,9 +248,9 @@ export default function MemoryView() {
                 >
                   <div>
                     <p className="text-sm font-medium text-[#0d1b2a]">{tech.label}</p>
-                    <p className="text-xs text-[#64748b] mt-0.5 line-clamp-1">{tech.description.slice(0, 60)}…</p>
+                    <p className="text-xs text-[#64748b] mt-0.5">{tech.description.slice(0, 60)}…</p>
                   </div>
-                  <ChevronRight size={16} className="text-[#64748b] group-hover:text-[#2e86ab] transition-colors flex-shrink-0 ml-3" />
+                  <ChevronRight size={16} className="text-[#64748b] group-hover:text-[#2e86ab] flex-shrink-0 ml-3" />
                 </button>
               ))}
             </div>
@@ -280,15 +266,9 @@ export default function MemoryView() {
               <ArrowLeft size={15} />
               Tutte le tecniche
             </button>
-            <TechniqueDetail
-              technique={selectedTechnique}
-              onBack={() => setSelectedTechnique(null)}
-            />
+            <TechniqueDetail technique={selectedTechnique} onBack={() => setSelectedTechnique(null)} />
             <div className="mt-8 pt-6 border-t border-[#e2e8f0]">
-              <button
-                onClick={reset}
-                className="text-sm text-[#64748b] hover:text-[#0d1b2a] transition-colors"
-              >
+              <button onClick={reset} className="text-sm text-[#64748b] hover:text-[#0d1b2a] transition-colors">
                 Ricomincia da capo
               </button>
             </div>
