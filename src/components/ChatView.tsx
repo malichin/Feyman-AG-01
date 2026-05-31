@@ -1,16 +1,30 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowUp } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { sendMessage, GeminiMessage } from '@/lib/gemini';
 
-const WELCOME_MESSAGE = `Come vuoi lavorare?
+// Detect numbered options in AI responses: "1 — text", "2. text", "S — text"
+function parseOptions(content: string): { text: string; options: { key: string; label: string }[] } {
+  const lines = content.split('\n');
+  const options: { key: string; label: string }[] = [];
+  const textLines: string[] = [];
 
-1 — Capire un argomento da zero
-2 — Studiare meglio qualcosa che sto già leggendo
-3 — Chiarire una parte che non mi è chiara
-4 — Memorizzare quello che ho già capito`;
+  for (const line of lines) {
+    const match = line.match(/^([1-9]|S)\s*[—\-.]\s*(.+)/i);
+    if (match) {
+      options.push({ key: match[1], label: match[2].trim() });
+    } else {
+      textLines.push(line);
+    }
+  }
+
+  // Strip trailing blank lines from text
+  while (textLines.length && !textLines[textLines.length - 1].trim()) textLines.pop();
+
+  return { text: textLines.join('\n'), options };
+}
 
 function TypingIndicator() {
   return (
@@ -22,34 +36,74 @@ function TypingIndicator() {
   );
 }
 
-function MessageBubble({ role, content }: { role: 'user' | 'assistant'; content: string }) {
-  const isUser = role === 'user';
+function AssistantMessage({
+  content,
+  isLast,
+  onOption,
+}: {
+  content: string;
+  isLast: boolean;
+  onOption: (key: string, label: string) => void;
+}) {
+  const { text, options } = parseOptions(content);
 
-  const formatContent = (text: string) => {
-    return text.split('\n').map((line, i) => (
+  const renderText = (t: string) =>
+    t.split('\n').map((line, i, arr) => (
       <React.Fragment key={i}>
         {line}
-        {i < text.split('\n').length - 1 && <br />}
+        {i < arr.length - 1 && <br />}
       </React.Fragment>
     ));
-  };
-
-  if (isUser) {
-    return (
-      <div className="flex justify-end mb-5">
-        <div className="max-w-[75%] px-4 py-3 rounded-2xl bg-[#f0f4f8] text-[#0d1b2a] text-sm leading-relaxed">
-          {formatContent(content)}
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="flex justify-start mb-5">
-      <div className="max-w-[85%]">
-        <div className="text-sm text-[#0d1b2a] leading-relaxed prose-feyman">
-          {formatContent(content)}
-        </div>
+    <div className="flex justify-start mb-6">
+      <div className="max-w-[90%] w-full">
+        {text && (
+          <div className="text-sm text-[#0d1b2a] leading-relaxed mb-3">
+            {renderText(text)}
+          </div>
+        )}
+        {options.length > 0 && (
+          <div className="space-y-2">
+            {options.map((opt) => (
+              <button
+                key={opt.key}
+                onClick={() => isLast && onOption(opt.key, opt.label)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${
+                  isLast
+                    ? 'border-[#e2e8f0] hover:border-[#2e86ab] hover:bg-[#f0f8ff] active:bg-[#e0f0ff] cursor-pointer'
+                    : 'border-[#f1f5f9] text-[#94a3b8] cursor-default'
+                }`}
+              >
+                <span
+                  className={`text-xs font-bold min-w-[20px] ${
+                    isLast ? 'text-[#2e86ab]' : 'text-[#cbd5e1]'
+                  }`}
+                >
+                  {opt.key}
+                </span>
+                <span className={`text-sm ${isLast ? 'text-[#0d1b2a]' : 'text-[#94a3b8]'}`}>
+                  {opt.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UserMessage({ content }: { content: string }) {
+  return (
+    <div className="flex justify-end mb-6">
+      <div className="max-w-[75%] px-4 py-3 rounded-2xl bg-[#f0f4f8] text-[#0d1b2a] text-sm leading-relaxed">
+        {content.split('\n').map((line, i, arr) => (
+          <React.Fragment key={i}>
+            {line}
+            {i < arr.length - 1 && <br />}
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );
@@ -68,7 +122,6 @@ export default function ChatView() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (ta) {
@@ -77,16 +130,13 @@ export default function ChatView() {
     }
   }, [inputValue]);
 
-  const handleSend = async () => {
-    const text = inputValue.trim();
-    if (!text || isLoading) return;
-
+  const handleSend = useCallback(async (text: string) => {
+    if (!text.trim() || isLoading) return;
     setInputValue('');
     addMessage({ role: 'user', content: text });
     setIsLoading(true);
 
     try {
-      // Build conversation history for Gemini
       const history: GeminiMessage[] = messages.map((m) => ({
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
@@ -96,79 +146,68 @@ export default function ChatView() {
       const response = await sendMessage(history);
       addMessage({ role: 'assistant', content: response });
     } catch {
-      addMessage({
-        role: 'assistant',
-        content: 'Si è verificato un errore. Riprova tra poco.',
-      });
+      addMessage({ role: 'assistant', content: 'Si è verificato un errore. Riprova tra poco.' });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [messages, isLoading, addMessage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
+  const handleOptionTap = useCallback(
+    (key: string, label: string) => {
+      handleSend(`${key} — ${label}`);
+    },
+    [handleSend]
+  );
 
   const isEmpty = messages.length === 0;
 
+  const WELCOME_OPTIONS = [
+    { key: '1', label: 'Capire un argomento da zero' },
+    { key: '2', label: 'Studiare meglio qualcosa che sto già leggendo' },
+    { key: '3', label: 'Chiarire una parte che non mi è chiara' },
+    { key: '4', label: 'Memorizzare quello che ho già capito' },
+  ];
+
   return (
     <div className="flex flex-col h-full">
-      {/* Messages area */}
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
         <div className="max-w-2xl mx-auto">
+
           {isEmpty ? (
-            /* Welcome menu */
+            /* Welcome — fully touch: tap to start */
             <div className="py-8">
-              <div className="mb-6">
-                <p className="text-xs font-medium text-[#64748b] uppercase tracking-wider mb-1">
-                  FEYMAN AG01
-                </p>
-                <h2 className="text-xl font-medium text-[#0d1b2a]">Come vuoi lavorare?</h2>
-              </div>
+              <p className="text-xs font-medium text-[#64748b] uppercase tracking-wider mb-1">FEYMAN AG01</p>
+              <h2 className="text-xl font-medium text-[#0d1b2a] mb-6">Come vuoi lavorare?</h2>
               <div className="space-y-2">
-                {[
-                  { num: '1', text: 'Capire un argomento da zero' },
-                  { num: '2', text: 'Studiare meglio qualcosa che sto già leggendo' },
-                  { num: '3', text: 'Chiarire una parte che non mi è chiara' },
-                  { num: '4', text: 'Memorizzare quello che ho già capito' },
-                ].map((item) => (
+                {WELCOME_OPTIONS.map((opt) => (
                   <button
-                    key={item.num}
-                    onClick={() => {
-                      setInputValue(item.num);
-                    }}
-                    className="w-full flex items-start gap-4 px-4 py-3.5 rounded-xl border border-[#e2e8f0] hover:border-[#2e86ab] hover:bg-[#f0f8ff] transition-all text-left group"
+                    key={opt.key}
+                    onClick={() => handleSend(`${opt.key} — ${opt.label}`)}
+                    className="w-full flex items-center gap-4 px-4 py-4 rounded-xl border border-[#e2e8f0] hover:border-[#2e86ab] hover:bg-[#f0f8ff] active:bg-[#e0f0ff] transition-all text-left"
                   >
-                    <span className="text-sm font-semibold text-[#2e86ab] min-w-[20px]">
-                      {item.num}
-                    </span>
-                    <span className="text-sm text-[#0d1b2a] group-hover:text-[#2e86ab] transition-colors">
-                      {item.text}
-                    </span>
+                    <span className="text-sm font-bold text-[#2e86ab] min-w-[20px]">{opt.key}</span>
+                    <span className="text-sm text-[#0d1b2a]">{opt.label}</span>
                   </button>
                 ))}
               </div>
+              {/* Or type freely */}
+              <p className="text-xs text-[#94a3b8] mt-6 text-center">oppure scrivi direttamente qui sotto</p>
             </div>
           ) : (
-            /* Messages */
             <>
-              {/* Show welcome as first assistant message context */}
-              <div className="mb-5">
-                <div className="text-sm text-[#0d1b2a] leading-relaxed prose-feyman">
-                  {WELCOME_MESSAGE.split('\n').map((line, i) => (
-                    <React.Fragment key={i}>
-                      {line}
-                      {i < WELCOME_MESSAGE.split('\n').length - 1 && <br />}
-                    </React.Fragment>
-                  ))}
-                </div>
-              </div>
-              {messages.map((message) => (
-                <MessageBubble key={message.id} role={message.role} content={message.content} />
-              ))}
+              {messages.map((message, index) =>
+                message.role === 'user' ? (
+                  <UserMessage key={message.id} content={message.content} />
+                ) : (
+                  <AssistantMessage
+                    key={message.id}
+                    content={message.content}
+                    isLast={index === messages.length - 1 && !isLoading}
+                    onOption={handleOptionTap}
+                  />
+                )
+              )}
               {isLoading && (
                 <div className="flex justify-start mb-5">
                   <TypingIndicator />
@@ -180,7 +219,7 @@ export default function ChatView() {
         </div>
       </div>
 
-      {/* Input area */}
+      {/* Input */}
       <div className="border-t border-[#e2e8f0] px-4 md:px-8 py-4">
         <div className="max-w-2xl mx-auto">
           <div className="relative border border-[#e2e8f0] rounded-2xl bg-white hover:border-[#2e86ab] focus-within:border-[#2e86ab] transition-colors">
@@ -188,17 +227,22 @@ export default function ChatView() {
               ref={textareaRef}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Scrivi un messaggio… (Invio per inviare, Shift+Invio per andare a capo)"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend(inputValue);
+                }
+              }}
+              placeholder="Scrivi qui…"
               rows={1}
               disabled={isLoading}
               className="w-full px-4 py-3.5 pr-12 text-[#0d1b2a] placeholder-[#94a3b8] resize-none bg-transparent text-sm outline-none rounded-2xl leading-relaxed disabled:opacity-50"
               style={{ minHeight: '48px', maxHeight: '160px' }}
             />
             <button
-              onClick={handleSend}
+              onClick={() => handleSend(inputValue)}
               disabled={!inputValue.trim() || isLoading}
-              className="absolute right-2.5 bottom-2.5 w-8 h-8 flex items-center justify-center rounded-lg bg-[#2e86ab] hover:bg-[#256f90] text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="absolute right-2.5 bottom-2.5 w-8 h-8 flex items-center justify-center rounded-lg bg-[#2e86ab] hover:bg-[#256f90] text-white transition-colors disabled:opacity-40"
             >
               <ArrowUp size={15} />
             </button>
