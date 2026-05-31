@@ -1,52 +1,33 @@
-// FEYMAN AG01 - Service Worker
-const CACHE_NAME = 'feyman-ag01-v1';
-const STATIC_ASSETS = [
-  '/',
-  '/manifest.json',
-];
+// FEYMAN AG01 - Service Worker (network-first)
+const CACHE_NAME = 'feyman-ag01-v3';
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    caches.keys().then((names) =>
+      Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n)))
+    )
   );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests and API calls
   if (event.request.method !== 'GET') return;
-  if (event.request.url.includes('generativelanguage.googleapis.com')) return;
+  if (event.request.url.includes('googleapis.com')) return;
 
+  // Network-first: always try fresh, fall back to cache only if offline
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((response) => {
-        // Cache valid responses
+    fetch(event.request)
+      .then((response) => {
         if (response && response.status === 200 && response.type === 'basic') {
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(event.request))
   );
 });
