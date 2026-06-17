@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>FEYMAN AG01</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; }
+  body { overscroll-behavior: none; }
+  .typing-dot {
+    display: inline-block; width: 7px; height: 7px;
+    background: #94a3b8; border-radius: 50%;
+    animation: blink 1.2s infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: .2s; }
+  .typing-dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+  .spin { animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  textarea { font-family: inherit; }
+</style>
+</head>
+<body class="bg-white text-[#0d1b2a] h-screen overflow-hidden flex flex-col">
+<div id="app" class="flex-1 flex flex-col overflow-hidden"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_BASE = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
+
+const SYSTEM_PROMPT = `Sei FEYMAN AG01, un tutor di studio basato sul metodo Feynman. Il tuo obiettivo è aiutare l'utente a capire davvero gli argomenti, non solo memorizzarli.
+
+Quando l'utente vuole capire qualcosa:
+1. Chiedi di spiegartelo con parole sue (come se tu fossi un bambino)
+2. Identifica i punti di debolezza
+3. Torna alle basi per colmare i gap
+4. Ripeti finché la spiegazione è chiara e semplice
+
+Rispondi sempre in italiano. Sii incoraggiante, paziente e chiaro. Usa esempi concreti e analogie semplici.
+
+Quando dai opzioni all'utente, usa questo formato esatto (così l'app le mostra come pulsanti toccabili):
+1 — Prima opzione
+2 — Seconda opzione
+3 — Terza opzione
+
+Non usare markdown complesso. Testo semplice con a capo per separare i concetti.`;
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+const S = {
+  apiKey: localStorage.getItem('feyman_api_key') || '',
+  view: 'chat',
+  sessions: JSON.parse(localStorage.getItem('feyman_sessions') || '[]'),
+  currentSession: null,
+  subjects: JSON.parse(localStorage.getItem('feyman_subjects') || '[]'),
+  progress: JSON.parse(localStorage.getItem('feyman_progress') || '[]'),
+  isLoading: false,
+  voiceEnabled: localStorage.getItem('feyman_voice') === 'true',
+  isListening: false,
+  openSubjects: [],
+  openTopics: [],
+  // play
+  playStep: 'topic',
+  playTopic: '',
+  playMode: null,
+  playQuestions: [],
+  playIndex: 0,
+  playScore: 0,
+  playAnswer: null,
+  cardFlipped: false,
+  openAnswer: '',
+  // settings
+  showSettings: false,
+};
+
+// ═══════════════════════════════════════════
+// STORAGE
+// ═══════════════════════════════════════════
+function save() {
+  localStorage.setItem('feyman_sessions', JSON.stringify(S.sessions));
+  localStorage.setItem('feyman_subjects', JSON.stringify(S.subjects));
+  localStorage.setItem('feyman_progress', JSON.stringify(S.progress));
+}
+
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+function uid() { return Date.now() + '-' + Math.random().toString(36).slice(2,7); }
+
+function h(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function parseOptions(content) {
+  const lines = content.split('\n');
+  const opts = [], text = [];
+  for (const ln of lines) {
+    const m = ln.match(/^([1-9]|S)\s*[—\-.]\s*(.+)/i);
+    if (m) opts.push({ key: m[1], label: m[2].trim() });
+    else text.push(ln);
+  }
+  while (text.length && !text[text.length-1].trim()) text.pop();
+  return { text: text.join('\n'), opts };
+}
+
+// ═══════════════════════════════════════════
+// GEMINI
+// ═══════════════════════════════════════════
+async function callGemini(messages, useSystem) {
+  const body = { contents: messages };
+  if (useSystem) body.system_instruction = { parts: [{ text: SYSTEM_PROMPT }] };
+  const res = await fetch(GEMINI_BASE + S.apiKey, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function geminiJSON(prompt) {
+  const txt = await callGemini([{ role:'user', parts:[{text:prompt}] }], false);
+  return txt.replace(/```json|```/g,'').trim();
+}
+
+// ═══════════════════════════════════════════
+// SPEECH
+// ═══════════════════════════════════════════
+const synth = window.speechSynthesis;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+
+function speak(text) {
+  if (!S.voiceEnabled || !text) return;
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/[1-9]\s*[—\-]\s*.+/g,'').trim());
+  u.lang = 'it-IT'; u.rate = 1.0;
+  synth.speak(u);
+}
+
+function startMic(cb) {
+  if (!SR) { alert('Il tuo browser non supporta il microfono. Usa Chrome o Safari.'); return; }
+  recog = new SR();
+  recog.lang = 'it-IT'; recog.continuous = false; recog.interimResults = false;
+  recog.onresult = e => cb(e.results[0][0].transcript);
+  recog.onerror = recog.onend = () => { S.isListening = false; renderView(); };
+  recog.start();
+  S.isListening = true; renderView();
+}
+
+// ═══════════════════════════════════════════
+// SESSIONS
+// ═══════════════════════════════════════════
+function newSession() {
+  S.currentSession = { id: uid(), title: 'Nuova sessione', messages: [], date: new Date().toISOString() };
+}
+
+function persistSession() {
+  if (!S.currentSession) return;
+  const i = S.sessions.findIndex(s => s.id === S.currentSession.id);
+  if (i >= 0) S.sessions[i] = S.currentSession; else S.sessions.unshift(S.currentSession);
+  save();
+}
+
+// ═══════════════════════════════════════════
+// RENDER HELPERS
+// ═══════════════════════════════════════════
+function tabs() {
+  const items = [
+    { id:'chat', icon:'💬', label:'Chat' },
+    { id:'projects', icon:'📁', label:'Progetti' },
+    { id:'play', icon:'🎮', label:'Play' },
+    { id:'memory', icon:'🧠', label:'Memoria' },
+    { id:'progress', icon:'📊', label:'Progressi' },
+  ];
+  return `<nav class="border-t border-gray-100 bg-white flex flex-shrink-0">
+    ${items.map(t=>`
+      <button data-tab="${t.id}" class="flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${S.view===t.id?'text-[#2e86ab]':'text-gray-400'}">
+        <span class="text-lg leading-none">${t.icon}</span>
+        <span class="text-[10px] font-medium">${t.label}</span>
+      </button>`).join('')}
+  </nav>`;
+}
+
+// ═══════════════════════════════════════════
+// SETUP SCREEN
+// ═══════════════════════════════════════════
+function renderSetup() {
+  return `<div class="flex-1 flex flex-col items-center justify-center px-6 py-12 overflow-y-auto">
+    <div class="w-full max-w-sm">
+      <div class="flex justify-center mb-6">
+        <div class="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center text-3xl">🔑</div>
+      </div>
+      <h1 class="text-xl font-semibold text-center mb-2">Configura la tua chiave API</h1>
+      <p class="text-sm text-gray-500 text-center mb-8 leading-relaxed">FEYMAN AG01 usa Gemini gratuitamente.<br>Crea la tua chiave personale in 2 minuti.</p>
+      <div class="space-y-4 mb-8">
+        ${[[1,'Vai su <a href="https://aistudio.google.com/apikey" target="_blank" class="text-[#2e86ab] font-medium underline">aistudio.google.com/apikey ↗</a>'],[2,'Accedi con il tuo account Google'],[3,'Clicca <strong>Crea chiave API</strong>'],[4,'Copia la chiave e incollala qui sotto']].map(([n,t])=>`
+        <div class="flex items-start gap-3">
+          <span class="w-6 h-6 rounded-full bg-blue-50 text-[#2e86ab] text-xs font-bold flex items-center justify-center mt-0.5 flex-shrink-0">${n}</span>
+          <span class="text-sm leading-relaxed">${t}</span>
+        </div>`).join('')}
+      </div>
+      <input id="keyIn" type="password" placeholder="AIza…" class="w-full px-4 py-3.5 text-sm rounded-xl border border-gray-200 outline-none focus:border-[#2e86ab] mb-2 bg-white" />
+      <p id="keyErr" class="text-xs text-red-500 mb-3 hidden">Chiave non valida. Controlla e riprova.</p>
+      <button id="keyBtn" class="w-full py-3.5 rounded-xl bg-[#2e86ab] hover:bg-[#256f90] text-white text-sm font-medium transition-colors">Verifica e salva</button>
+      <p class="text-xs text-gray-400 mt-5 text-center">La chiave viene salvata solo sul tuo dispositivo.</p>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// SETTINGS MODAL
+// ═══════════════════════════════════════════
+function renderSettings() {
+  const masked = S.apiKey ? S.apiKey.slice(0,6) + '•'.repeat(20) : '';
+  return `<div id="settingsOverlay" class="fixed inset-0 z-50 bg-black/30 flex items-end sm:items-center justify-center px-4 pb-4 sm:pb-0">
+    <div class="w-full max-w-sm bg-white rounded-2xl shadow-xl">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <span class="text-sm font-medium">⚙️ Impostazioni API</span>
+        <button id="closeSettings" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-50 text-gray-500">✕</button>
+      </div>
+      <div class="px-5 py-5 space-y-4">
+        ${S.apiKey?`<div>
+          <p class="text-xs text-gray-400 uppercase tracking-wider mb-1.5">Chiave attiva</p>
+          <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-100">
+            <span class="text-sm font-mono flex-1">${masked}</span>
+            <button id="removeKey" class="text-gray-400 hover:text-red-500 transition-colors text-sm">🗑</button>
+          </div>
+        </div>`:''}
+        <div>
+          <p class="text-xs text-gray-400 uppercase tracking-wider mb-1.5">${S.apiKey?'Cambia chiave':'Inserisci chiave'}</p>
+          <input id="newKeyIn" type="password" placeholder="AIza…" class="w-full px-4 py-3 text-sm rounded-xl border border-gray-200 outline-none focus:border-[#2e86ab] bg-white" />
+          <p id="newKeyErr" class="text-xs text-red-500 mt-1 hidden">Chiave non valida.</p>
+        </div>
+        <button id="saveNewKey" class="w-full py-3 rounded-xl bg-[#2e86ab] hover:bg-[#256f90] text-white text-sm font-medium transition-colors">Salva</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// CHAT
+// ═══════════════════════════════════════════
+function renderChat() {
+  const msgs = S.currentSession?.messages || [];
+  const empty = msgs.length === 0;
+  const WELCOME = [
+    { key:'1', label:'Capire un argomento da zero' },
+    { key:'2', label:'Studiare meglio qualcosa che sto già leggendo' },
+    { key:'3', label:'Chiarire una parte che non mi è chiara' },
+    { key:'4', label:'Memorizzare quello che ho già capito' },
+  ];
+
+  return `<div class="flex-1 flex flex-col overflow-hidden">
+    ${!empty?`<div class="flex items-center justify-between px-4 py-2 border-b border-gray-50 flex-shrink-0">
+      <span class="text-xs text-gray-400 truncate flex-1 pr-2">${h(S.currentSession?.title||'Chat')}</span>
+      <div class="flex items-center gap-1">
+        <button id="toggleVoice" class="text-sm px-2 py-1 rounded-lg transition-colors ${S.voiceEnabled?'text-[#2e86ab] bg-blue-50':'text-gray-400 hover:bg-gray-50'}">${S.voiceEnabled?'🔊':'🔇'}</button>
+        <button id="newChat" class="text-xs text-gray-500 hover:text-[#2e86ab] px-2 py-1.5 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap">+ Nuova chat</button>
+      </div>
+    </div>`:''}
+    <div id="msgBox" class="flex-1 overflow-y-auto px-4 py-6">
+      <div class="max-w-2xl mx-auto">
+        ${empty?`<div class="py-6">
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">FEYMAN AG01</p>
+          <h2 class="text-xl font-medium mb-6">Come vuoi lavorare?</h2>
+          <div class="space-y-2">
+            ${WELCOME.map(o=>`<button data-send="${h(o.key+' — '+o.label)}" class="w-full flex items-center gap-4 px-4 py-4 rounded-xl border border-gray-200 hover:border-[#2e86ab] hover:bg-blue-50 active:bg-blue-100 transition-all text-left">
+              <span class="text-sm font-bold text-[#2e86ab] min-w-[20px]">${o.key}</span>
+              <span class="text-sm">${o.label}</span>
+            </button>`).join('')}
+          </div>
+          <p class="text-xs text-gray-400 mt-6 text-center">oppure scrivi direttamente qui sotto</p>
+        </div>`:`
+        ${msgs.map((m,i)=>renderMsg(m,i===msgs.length-1&&!S.isLoading)).join('')}
+        ${S.isLoading?`<div class="flex justify-start mb-5 gap-1 py-1"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`:''}
+        <div id="msgEnd"></div>`}
+      </div>
+    </div>
+    <div class="border-t border-gray-200 px-4 py-4 flex-shrink-0">
+      <div class="max-w-2xl mx-auto">
+        <div class="relative border border-gray-200 rounded-2xl bg-white hover:border-[#2e86ab] focus-within:border-[#2e86ab] transition-colors">
+          <textarea id="chatIn" rows="1" placeholder="Scrivi qui…" ${S.isLoading?'disabled':''}
+            class="w-full px-4 py-3.5 pr-20 text-sm placeholder-gray-400 resize-none bg-transparent outline-none rounded-2xl leading-relaxed disabled:opacity-50"
+            style="min-height:48px;max-height:160px"></textarea>
+          <div class="absolute right-2.5 bottom-2.5 flex items-center gap-1">
+            <button id="micBtn" class="w-8 h-8 flex items-center justify-center rounded-lg text-lg transition-colors ${S.isListening?'bg-red-100 animate-pulse':'hover:bg-gray-50'}">🎤</button>
+            <button id="sendBtn" ${S.isLoading?'disabled':''}
+              class="w-8 h-8 flex items-center justify-center rounded-lg bg-[#2e86ab] hover:bg-[#256f90] text-white transition-colors disabled:opacity-40">↑</button>
+          </div>
+        </div>
+        <p class="text-[11px] text-gray-400 mt-2 text-center">FEYMAN AG01 può fare errori. Verifica le informazioni importanti.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMsg(m, isLast) {
+  if (m.role === 'user') {
+    return `<div class="flex justify-end mb-6">
+      <div class="max-w-[75%] px-4 py-3 rounded-2xl bg-[#f0f4f8] text-sm leading-relaxed">${h(m.content).replace(/\n/g,'<br>')}</div>
+    </div>`;
+  }
+  const { text, opts } = parseOptions(m.content);
+  return `<div class="flex justify-start mb-6">
+    <div class="max-w-[90%] w-full">
+      ${text?`<div class="text-sm leading-relaxed mb-3">${h(text).replace(/\n/g,'<br>')}</div>`:''}
+      ${opts.length?`<div class="space-y-2">${opts.map(o=>`
+        <button data-send="${h(o.key+' — '+o.label)}" ${!isLast?'disabled':''}
+          class="w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all ${isLast?'border-gray-200 hover:border-[#2e86ab] hover:bg-blue-50 active:bg-blue-100':'border-gray-100 opacity-40 cursor-default'}">
+          <span class="text-xs font-bold min-w-[20px] ${isLast?'text-[#2e86ab]':'text-gray-300'}">${o.key}</span>
+          <span class="text-sm">${h(o.label)}</span>
+        </button>`).join('')}</div>`:''}
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// PROJECTS
+// ═══════════════════════════════════════════
+const FILE_TYPES = [
+  { id:'spiegazione', icon:'📖', label:'Spiegazione' },
+  { id:'flashcard',   icon:'🃏', label:'Flashcard' },
+  { id:'quiz',        icon:'❓', label:'Quiz' },
+  { id:'tecniche',    icon:'🧠', label:'Tecniche' },
+  { id:'verifiche',   icon:'✅', label:'Verifiche' },
+  { id:'rapporti',    icon:'📈', label:'Rapporti' },
+];
+
+function renderProjects() {
+  return `<div class="flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-xl font-semibold">Progetti</h1>
+          <p class="text-sm text-gray-500 mt-0.5">Organizza i tuoi materiali di studio.</p>
+        </div>
+      </div>
+      ${!S.subjects.length?`<div class="text-center py-16"><div class="text-4xl mb-3">📁</div><p class="text-sm text-gray-500">Nessuna materia ancora.</p><p class="text-xs text-gray-400 mt-1">Aggiungine una qui sotto.</p></div>`:''}
+      <div class="space-y-0.5">
+        ${S.subjects.map((s,si)=>renderSubject(s,si)).join('')}
+      </div>
+      <button id="addSubBtn" class="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors text-left border border-dashed border-gray-200 mt-3">
+        <span class="text-[#52b788] text-lg">+</span>
+        <span class="text-sm text-gray-500">Crea nuova materia</span>
+      </button>
+    </div>
+  </div>`;
+}
+
+function renderSubject(s, si) {
+  const open = S.openSubjects.includes(s.id);
+  return `<div class="mb-1">
+    <div class="flex items-center group">
+      <button data-osub="${si}" class="flex-1 flex items-center gap-2.5 px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors text-left">
+        <span>${open?'📂':'📁'}</span>
+        <span class="text-sm font-medium flex-1">${h(s.label)}</span>
+        <span class="text-gray-400 text-xs">${open?'▾':'›'}</span>
+      </button>
+      <button data-dsub="${si}" class="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all mr-1">🗑</button>
+    </div>
+    ${open?`<div class="ml-4 mt-0.5 border-l border-gray-100 pl-2 space-y-0.5">
+      ${!s.topics.length?'<p class="text-xs text-gray-400 px-3 py-2">Nessun argomento — aggiungine uno</p>':''}
+      ${s.topics.map((t,ti)=>renderTopic(s,si,t,ti)).join('')}
+      <button data-atop="${si}" class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors text-left">
+        <span class="text-gray-400 text-sm">+</span>
+        <span class="text-xs text-gray-500">Aggiungi argomento</span>
+      </button>
+    </div>`:''}
+  </div>`;
+}
+
+function renderTopic(s, si, topic, ti) {
+  const key = si+'-'+ti;
+  const open = S.openTopics.includes(key);
+  return `<div>
+    <div class="flex items-center group">
+      <button data-otop="${key}" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors text-left">
+        <span class="text-gray-400 text-xs">${open?'▾':'›'}</span>
+        <span class="text-sm">${h(topic)}</span>
+      </button>
+      <button data-dtop="${key}" class="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all mr-1 text-xs">🗑</button>
+    </div>
+    ${open?`<div class="ml-6 mt-0.5 space-y-0.5">
+      ${FILE_TYPES.map(ft=>`<button data-fa="${ft.id}" data-ftopic="${h(topic)}" data-fsubject="${h(s.label)}"
+        class="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-blue-50 active:bg-blue-100 transition-colors text-left">
+        <span class="text-sm">${ft.icon}</span>
+        <span class="text-xs text-gray-600">${ft.label}</span>
+        <span class="ml-auto text-gray-300 text-xs">›</span>
+      </button>`).join('')}
+    </div>`:''}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// PLAY
+// ═══════════════════════════════════════════
+const MODES = [
+  { id:'flashcard',     icon:'🃏', label:'Flashcard',       desc:'Domanda e risposta, gira la carta' },
+  { id:'truefalse',     icon:'✅', label:'Vero o Falso',    desc:"Decidi se un'affermazione è vera o falsa" },
+  { id:'multiplechoice',icon:'📋', label:'Scelta multipla', desc:'Scegli la risposta corretta tra 4 opzioni' },
+  { id:'openanswer',    icon:'✏️', label:'Risposta aperta', desc:'Scrivi la risposta con parole tue' },
+];
+
+function renderPlay() {
+  if (S.playStep==='topic') return `<div class="flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto">
+      <h1 class="text-xl font-semibold mb-1">Play</h1>
+      <p class="text-sm text-gray-500 mb-6">Metti alla prova quello che sai.</p>
+      <p class="text-sm text-gray-500 mb-3">Su quale argomento vuoi allenarti?</p>
+      <input id="topicIn" value="${h(S.playTopic)}" placeholder="Es. Le frazioni, La Rivoluzione Francese…"
+        class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-[#2e86ab] bg-white" />
+      <button id="topicBtn" class="mt-3 w-full py-3 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] disabled:opacity-40 transition-colors">Continua →</button>
+    </div>
+  </div>`;
+
+  if (S.playStep==='mode') return `<div class="flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto">
+      <button id="backTopic" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-[#0d1b2a] mb-6 transition-colors">← Indietro</button>
+      <p class="text-xs text-gray-400 uppercase tracking-wider mb-1">Argomento</p>
+      <h2 class="text-lg font-semibold mb-6">${h(S.playTopic)}</h2>
+      <p class="text-sm text-gray-500 mb-4">Scegli la modalità:</p>
+      <div class="space-y-2">${MODES.map(m=>`
+        <button data-mode="${m.id}" class="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl border border-gray-200 hover:border-[#2e86ab] hover:bg-blue-50 active:bg-blue-100 transition-all text-left">
+          <span class="text-xl">${m.icon}</span>
+          <div><p class="text-sm font-medium">${m.label}</p><p class="text-xs text-gray-500 mt-0.5">${m.desc}</p></div>
+          <span class="ml-auto text-gray-400">›</span>
+        </button>`).join('')}
+      </div>
+    </div>
+  </div>`;
+
+  if (S.playStep==='loading') return `<div class="flex-1 flex items-center justify-center flex-col gap-3 text-gray-500">
+    <div class="flex gap-1"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>
+    <p class="text-sm">Creo le domande…</p>
+  </div>`;
+
+  if (S.playStep==='score') {
+    const pct = Math.round(S.playScore/S.playQuestions.length*100);
+    const lbl = pct>=80?'Ottimo! 🎉':pct>=50?'Bene! 👍':'Continua a studiare 📚';
+    return `<div class="flex-1 flex items-center justify-center flex-col gap-6 px-4 text-center">
+      <div class="w-24 h-24 rounded-full border-2 border-[#2e86ab] flex items-center justify-center">
+        <span class="text-2xl font-bold text-[#2e86ab]">${pct}%</span>
+      </div>
+      <div><p class="text-lg font-semibold">${lbl}</p><p class="text-sm text-gray-500 mt-1">${S.playScore} risposte corrette su ${S.playQuestions.length}</p></div>
+      <div class="flex gap-3 w-full max-w-xs">
+        <button id="retryBtn" class="flex-1 py-2.5 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors">Riprova</button>
+        <button id="doneBtn" class="flex-1 py-2.5 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] transition-colors">Fine</button>
+      </div>
+    </div>`;
+  }
+
+  if (S.playStep==='playing') return renderGame();
+  return '';
+}
+
+function renderGame() {
+  const q = S.playQuestions[S.playIndex];
+  const n = S.playIndex+1, tot = S.playQuestions.length;
+  const nav = `<div class="flex items-center gap-3 mb-4">
+    <button id="backMode" class="text-sm text-gray-500 hover:text-[#0d1b2a] transition-colors">← Cambia modalità</button>
+  </div>
+  <p class="text-xs text-gray-400 text-center mb-5">${n} / ${tot}</p>`;
+
+  if (S.playMode==='flashcard') {
+    const f = S.cardFlipped;
+    return `<div class="flex-1 overflow-y-auto px-4 py-6"><div class="max-w-2xl mx-auto">${nav}
+      <button id="flipBtn" class="w-full min-h-48 border border-gray-200 rounded-2xl flex items-center justify-center cursor-pointer hover:border-[#2e86ab] transition-colors p-6 text-center ${f?'bg-blue-50':'bg-white'}">
+        <div><p class="text-xs text-gray-400 uppercase tracking-wider mb-3">${f?'Risposta':'Domanda'}</p>
+        <p class="text-base leading-relaxed">${h(f?q.back:q.front)}</p>
+        ${!f?'<p class="text-xs text-gray-400 mt-4">Tocca per girare</p>':''}</div>
+      </button>
+      ${f?`<div class="flex gap-3 mt-6">
+        <button data-knew="0" class="flex-1 py-2.5 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors">Non lo sapevo</button>
+        <button data-knew="1" class="flex-1 py-2.5 text-sm bg-[#52b788] text-white rounded-xl hover:bg-[#3da674] transition-colors">Lo sapevo ✓</button>
+      </div>`:''}
+    </div></div>`;
+  }
+
+  if (S.playMode==='truefalse') {
+    const ans = S.playAnswer;
+    const correct = ans!==null && ans===q.answer;
+    return `<div class="flex-1 overflow-y-auto px-4 py-6"><div class="max-w-2xl mx-auto">${nav}
+      <div class="border border-gray-200 rounded-2xl p-6 mb-6"><p class="text-sm font-medium leading-relaxed">${h(q.statement)}</p></div>
+      ${ans===null?`<div class="flex gap-3">
+        <button data-tf="true" class="flex-1 py-3.5 text-sm border border-gray-200 rounded-xl hover:border-[#52b788] hover:bg-green-50 active:bg-green-100 transition-all font-medium">✅ Vero</button>
+        <button data-tf="false" class="flex-1 py-3.5 text-sm border border-gray-200 rounded-xl hover:border-red-400 hover:bg-red-50 active:bg-red-100 transition-all font-medium">❌ Falso</button>
+      </div>`:`<div class="flex flex-col gap-3">
+        <div class="flex items-center gap-2 p-3 rounded-xl ${correct?'bg-green-50 text-green-700':'bg-red-50 text-red-700'}">
+          <span>${correct?'✓':'✗'}</span>
+          <span class="text-sm font-medium">${correct?'Corretto!':'Sbagliato — era '+(q.answer?'Vero':'Falso')}</span>
+        </div>
+        <p class="text-xs text-gray-500 px-1">${h(q.explanation)}</p>
+        <button id="nextBtn" class="py-2.5 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] transition-colors">Prossima →</button>
+      </div>`}
+    </div></div>`;
+  }
+
+  if (S.playMode==='multiplechoice') {
+    const ans = S.playAnswer;
+    return `<div class="flex-1 overflow-y-auto px-4 py-6"><div class="max-w-2xl mx-auto">${nav}
+      <div class="border border-gray-200 rounded-2xl p-5 mb-5"><p class="text-sm font-medium leading-relaxed">${h(q.question)}</p></div>
+      <div class="space-y-2">${q.options.map((opt,i)=>{
+        let cls='w-full text-left px-4 py-3 rounded-xl border text-sm transition-all ';
+        if(ans===null) cls+='border-gray-200 hover:border-[#2e86ab] hover:bg-blue-50 active:bg-blue-100';
+        else if(i===q.correct) cls+='border-[#52b788] bg-green-50 text-green-700 font-medium';
+        else if(i===ans) cls+='border-red-400 bg-red-50 text-red-700';
+        else cls+='border-gray-100 text-gray-400';
+        return `<button class="${cls}" ${ans!==null?'disabled':''} data-choice="${i}">
+          <span class="font-semibold mr-2 text-gray-400">${String.fromCharCode(65+i)}.</span>${h(opt)}
+        </button>`;
+      }).join('')}</div>
+      ${ans!==null?'<button id="nextBtn" class="mt-4 w-full py-2.5 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] transition-colors">Prossima →</button>':''}
+    </div></div>`;
+  }
+
+  if (S.playMode==='openanswer') {
+    const rev = S.cardFlipped;
+    return `<div class="flex-1 overflow-y-auto px-4 py-6"><div class="max-w-2xl mx-auto">${nav}
+      <div class="border border-gray-200 rounded-2xl p-5 mb-5"><p class="text-sm font-medium">${h(q.front)}</p></div>
+      ${!rev?`<textarea id="openIn" rows="4" placeholder="Scrivi la tua risposta…"
+        class="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:border-[#2e86ab] resize-none mb-3">${h(S.openAnswer)}</textarea>
+        <button id="revealBtn" class="w-full py-2.5 text-sm bg-[#2e86ab] text-white rounded-xl hover:bg-[#256f90] transition-colors">Vedi risposta</button>`
+      :`<div class="space-y-3 mb-4">
+        <div><p class="text-xs text-gray-400 uppercase tracking-wider mb-1">La tua risposta</p><p class="text-sm bg-gray-50 rounded-xl p-3">${h(S.openAnswer)||'<span class="text-gray-400 italic">non inserita</span>'}</p></div>
+        <div><p class="text-xs text-gray-400 uppercase tracking-wider mb-1">Risposta corretta</p><p class="text-sm bg-blue-50 rounded-xl p-3">${h(q.back)}</p></div>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">Quanto eri vicino?</p>
+      <div class="flex gap-3">
+        <button data-knew="0" class="flex-1 py-2.5 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors">Lontano</button>
+        <button data-knew="1" class="flex-1 py-2.5 text-sm bg-[#52b788] text-white rounded-xl hover:bg-[#3da674] transition-colors">Giusto ✓</button>
+      </div>`}
+    </div></div>`;
+  }
+  return '';
+}
+
+// ═══════════════════════════════════════════
+// MEMORY
+// ═══════════════════════════════════════════
+function renderMemory() {
+  const all = [];
+  S.subjects.forEach(s=>s.topics.forEach(t=>all.push({topic:t,subject:s.label})));
+  return `<div class="flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto">
+      <h1 class="text-xl font-semibold mb-1">Memoria</h1>
+      <p class="text-sm text-gray-500 mb-6">Ripassi rapidi sui tuoi argomenti.</p>
+      ${!all.length?`<div class="text-center py-16"><div class="text-4xl mb-3">🧠</div>
+        <p class="text-sm text-gray-500">Aggiungi argomenti in Progetti per vederli qui.</p></div>`
+      :`<div class="flex flex-wrap gap-2">${all.map(({topic,subject})=>`
+        <button data-mt="${h(topic)}" data-ms="${h(subject)}"
+          class="px-4 py-2.5 rounded-full border border-gray-200 text-sm hover:border-[#2e86ab] hover:bg-blue-50 active:bg-blue-100 transition-all text-left">
+          <span class="font-medium">${h(topic)}</span>
+          <span class="text-xs text-gray-400 ml-1.5">${h(subject)}</span>
+        </button>`).join('')}</div>`}
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// PROGRESS
+// ═══════════════════════════════════════════
+function renderProgress() {
+  const modeLabel={flashcard:'Flashcard',truefalse:'Vero/Falso',multiplechoice:'Scelta multipla',openanswer:'Risposta aperta'};
+  return `<div class="flex-1 overflow-y-auto px-4 py-6">
+    <div class="max-w-2xl mx-auto">
+      <h1 class="text-xl font-semibold mb-1">Progressi</h1>
+      <p class="text-sm text-gray-500 mb-6">Il tuo storico di studio.</p>
+      ${!S.progress.length?`<div class="text-center py-16"><div class="text-4xl mb-3">📊</div>
+        <p class="text-sm text-gray-500">Fai un quiz in Play per vedere i tuoi progressi.</p></div>`
+      :`<div class="space-y-3">${S.progress.slice().reverse().map(p=>`
+        <div class="border border-gray-100 rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-1">
+            <p class="text-sm font-medium truncate flex-1 pr-2">${h(p.topic)}</p>
+            <span class="text-sm font-bold flex-shrink-0 ${p.pct>=80?'text-[#52b788]':p.pct>=50?'text-[#2e86ab]':'text-red-400'}">${p.pct}%</span>
+          </div>
+          <p class="text-xs text-gray-400">${modeLabel[p.mode]||p.mode} · ${p.score}/${p.total} · ${new Date(p.date).toLocaleDateString('it-IT')}</p>
+          <div class="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div class="h-full rounded-full ${p.pct>=80?'bg-[#52b788]':p.pct>=50?'bg-[#2e86ab]':'bg-red-400'}" style="width:${p.pct}%"></div>
+          </div>
+        </div>`).join('')}</div>`}
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// RENDER ENGINE
+// ═══════════════════════════════════════════
+function render() {
+  const app = document.getElementById('app');
+  if (!S.apiKey) {
+    app.innerHTML = renderSetup();
+    bindSetup(); return;
+  }
+  const viewHTML = {chat:renderChat,projects:renderProjects,play:renderPlay,memory:renderMemory,progress:renderProgress}[S.view]?.();
+  app.innerHTML = `<div class="flex-1 overflow-hidden flex flex-col">${viewHTML||''}</div>${tabs()}${S.showSettings?renderSettings():''}`;
+  bindAll();
+  if (S.view==='chat') setTimeout(()=>document.getElementById('msgEnd')?.scrollIntoView({behavior:'smooth'}),50);
+}
+
+function renderView() {
+  render(); // simple full re-render is fine for this app size
+}
+
+// ═══════════════════════════════════════════
+// BIND ALL
+// ═══════════════════════════════════════════
+function bindAll() {
+  // Tabs
+  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{
+    S.view=b.dataset.tab;
+    if(S.view==='chat'&&!S.currentSession) newSession();
+    render();
+  }));
+
+  // Settings overlay
+  document.getElementById('closeSettings')?.addEventListener('click',()=>{S.showSettings=false;render();});
+  document.getElementById('removeKey')?.addEventListener('click',()=>{
+    if(confirm('Rimuovere la chiave API?')){
+      S.apiKey='';localStorage.removeItem('feyman_api_key');S.showSettings=false;render();
+    }
+  });
+  document.getElementById('saveNewKey')?.addEventListener('click',async()=>{
+    const k=document.getElementById('newKeyIn')?.value.trim();
+    if(!k)return;
+    const btn=document.getElementById('saveNewKey');
+    btn.textContent='Verifica…';btn.disabled=true;
+    try{
+      const res=await fetch(GEMINI_BASE+k,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:'Ciao'}]}]})});
+      if(res.ok){S.apiKey=k;localStorage.setItem('feyman_api_key',k);S.showSettings=false;render();}
+      else{document.getElementById('newKeyErr').classList.remove('hidden');btn.textContent='Salva';btn.disabled=false;}
+    }catch{document.getElementById('newKeyErr').classList.remove('hidden');btn.textContent='Salva';btn.disabled=false;}
+  });
+
+  bindSetupInline();
+  bindChatEvents();
+  bindProjectsEvents();
+  bindPlayEvents();
+  bindMemoryEvents();
+}
+
+function bindSetup() {
+  const btn=document.getElementById('keyBtn'),input=document.getElementById('keyIn'),err=document.getElementById('keyErr');
+  async function go(){
+    const k=input.value.trim();if(!k)return;
+    btn.textContent='Verifica…';btn.disabled=true;err.classList.add('hidden');
+    try{
+      const res=await fetch(GEMINI_BASE+k,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:'Ciao'}]}]})});
+      if(res.ok){S.apiKey=k;localStorage.setItem('feyman_api_key',k);render();}
+      else{err.classList.remove('hidden');btn.textContent='Verifica e salva';btn.disabled=false;}
+    }catch{err.textContent='Errore di connessione.';err.classList.remove('hidden');btn.textContent='Verifica e salva';btn.disabled=false;}
+  }
+  btn.addEventListener('click',go);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+}
+
+function bindSetupInline() {} // handled in bindAll via bindSetup pattern
+
+// ═══════════════════════════════════════════
+// CHAT EVENTS
+// ═══════════════════════════════════════════
+function bindChatEvents() {
+  const inp=document.getElementById('chatIn');
+  if(inp){
+    inp.addEventListener('input',()=>{inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,160)+'px';});
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doSend(inp.value);}});
+  }
+  document.getElementById('sendBtn')?.addEventListener('click',()=>doSend(inp?.value||''));
+  document.getElementById('newChat')?.addEventListener('click',()=>{newSession();render();});
+  document.getElementById('toggleVoice')?.addEventListener('click',()=>{
+    S.voiceEnabled=!S.voiceEnabled;localStorage.setItem('feyman_voice',S.voiceEnabled);render();
+  });
+  document.getElementById('micBtn')?.addEventListener('click',()=>{
+    if(S.isListening){recog?.stop();return;}
+    startMic(txt=>{if(inp)inp.value=txt;doSend(txt);});
+  });
+  document.querySelectorAll('[data-send]').forEach(b=>b.addEventListener('click',()=>doSend(b.dataset.send)));
+}
+
+async function doSend(text) {
+  if(!text?.trim()||S.isLoading)return;
+  if(!S.currentSession)newSession();
+  S.currentSession.messages.push({role:'user',content:text.trim(),id:uid(),ts:Date.now()});
+  if(S.currentSession.messages.length===1)S.currentSession.title=text.trim().slice(0,50);
+  S.isLoading=true;render();
+  try{
+    const hist=S.currentSession.messages.slice(0,-1).map(m=>({role:m.role==='user'?'user':'model',parts:[{text:m.content}]}));
+    hist.push({role:'user',parts:[{text:text.trim()}]});
+    const reply=await callGemini(hist,true);
+    S.currentSession.messages.push({role:'assistant',content:reply,id:uid(),ts:Date.now()});
+    speak(reply);
+    persistSession();
+  }catch(e){
+    S.currentSession.messages.push({role:'assistant',content:'Errore: '+e.message,id:uid(),ts:Date.now()});
+  }
+  S.isLoading=false;render();
+}
+
+// ═══════════════════════════════════════════
+// PROJECTS EVENTS
+// ═══════════════════════════════════════════
+function bindProjectsEvents() {
+  document.getElementById('addSubBtn')?.addEventListener('click',()=>{
+    const n=prompt('Nome della materia:');
+    if(n?.trim()){S.subjects.push({id:uid(),label:n.trim(),topics:[]});save();render();}
+  });
+  document.querySelectorAll('[data-osub]').forEach(b=>b.addEventListener('click',()=>{
+    const id=S.subjects[+b.dataset.osub].id;
+    const i=S.openSubjects.indexOf(id);
+    if(i>=0)S.openSubjects.splice(i,1);else S.openSubjects.push(id);render();
+  }));
+  document.querySelectorAll('[data-dsub]').forEach(b=>b.addEventListener('click',()=>{
+    const si=+b.dataset.dsub;
+    if(confirm('Eliminare "'+S.subjects[si].label+'"?')){S.subjects.splice(si,1);save();render();}
+  }));
+  document.querySelectorAll('[data-atop]').forEach(b=>b.addEventListener('click',()=>{
+    const si=+b.dataset.atop;const n=prompt('Nome dell\'argomento:');
+    if(n?.trim()){S.subjects[si].topics.push(n.trim());save();render();}
+  }));
+  document.querySelectorAll('[data-otop]').forEach(b=>b.addEventListener('click',()=>{
+    const k=b.dataset.otop;const i=S.openTopics.indexOf(k);
+    if(i>=0)S.openTopics.splice(i,1);else S.openTopics.push(k);render();
+  }));
+  document.querySelectorAll('[data-dtop]').forEach(b=>b.addEventListener('click',()=>{
+    const [si,ti]=b.dataset.dtop.split('-').map(Number);
+    if(confirm('Eliminare "'+S.subjects[si].topics[ti]+'"?')){S.subjects[si].topics.splice(ti,1);save();render();}
+  }));
+  document.querySelectorAll('[data-fa]').forEach(b=>b.addEventListener('click',()=>{
+    const act=b.dataset.fa,topic=b.dataset.ftopic,subject=b.dataset.fsubject;
+    if(act==='spiegazione'){newSession();S.view='chat';render();setTimeout(()=>doSend(`Voglio capire "${topic}" (materia: ${subject}). Spiegamelo con il metodo Feynman.`),80);}
+    else if(act==='tecniche'){newSession();S.view='chat';render();setTimeout(()=>doSend(`Quali tecniche di studio mi consigli per memorizzare "${topic}" (materia: ${subject})?`),80);}
+    else if(['flashcard','quiz','verifiche'].includes(act)){S.playTopic=topic+' ('+subject+')';S.playStep='mode';S.view='play';render();}
+    else if(act==='rapporti'){S.view='progress';render();}
+  }));
+}
+
+// ═══════════════════════════════════════════
+// PLAY EVENTS
+// ═══════════════════════════════════════════
+function bindPlayEvents() {
+  const tIn=document.getElementById('topicIn');
+  document.getElementById('topicBtn')?.addEventListener('click',()=>{
+    const t=tIn?.value.trim();if(!t)return;S.playTopic=t;S.playStep='mode';render();
+  });
+  tIn?.addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('topicBtn')?.click();});
+
+  document.getElementById('backTopic')?.addEventListener('click',()=>{S.playStep='topic';render();});
+  document.getElementById('backMode')?.addEventListener('click',()=>{S.playStep='mode';S.playAnswer=null;S.cardFlipped=false;render();});
+  document.getElementById('doneBtn')?.addEventListener('click',()=>{S.playStep='topic';S.playTopic='';render();});
+  document.getElementById('retryBtn')?.addEventListener('click',()=>startMode(S.playMode));
+
+  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>startMode(b.dataset.mode)));
+
+  // Game controls
+  document.getElementById('flipBtn')?.addEventListener('click',()=>{S.cardFlipped=!S.cardFlipped;render();});
+  document.getElementById('revealBtn')?.addEventListener('click',()=>{
+    S.openAnswer=document.getElementById('openIn')?.value||'';S.cardFlipped=true;render();
+  });
+  document.getElementById('nextBtn')?.addEventListener('click',()=>nextQ(true));
+  document.querySelectorAll('[data-knew]').forEach(b=>b.addEventListener('click',()=>nextQ(b.dataset.knew==='1')));
+  document.querySelectorAll('[data-tf]').forEach(b=>b.addEventListener('click',()=>{
+    const ans=b.dataset.tf==='true';S.playAnswer=ans;
+    if(ans===S.playQuestions[S.playIndex].answer)S.playScore++;render();
+  }));
+  document.querySelectorAll('[data-choice]').forEach(b=>b.addEventListener('click',()=>{
+    const c=+b.dataset.choice;S.playAnswer=c;
+    if(c===S.playQuestions[S.playIndex].correct)S.playScore++;render();
+  }));
+}
+
+async function startMode(mode) {
+  S.playMode=mode;S.playStep='loading';S.playIndex=0;S.playScore=0;S.playAnswer=null;S.cardFlipped=false;render();
+  try{
+    let raw;
+    if(mode==='flashcard'||mode==='openanswer'){
+      raw=await geminiJSON(`Genera esattamente 8 flashcard su "${S.playTopic}" in italiano. Rispondi SOLO con array JSON valido. Formato: [{"front":"domanda","back":"risposta"}]`);
+    }else if(mode==='truefalse'){
+      raw=await geminiJSON(`Genera esattamente 8 affermazioni vero/falso su "${S.playTopic}" in italiano. Rispondi SOLO con array JSON valido. Formato: [{"statement":"...","answer":true,"explanation":"spiegazione breve"}]`);
+    }else{
+      raw=await geminiJSON(`Genera esattamente 6 domande a scelta multipla su "${S.playTopic}" in italiano. Rispondi SOLO con array JSON valido. Formato: [{"question":"...","options":["A","B","C","D"],"correct":0}]`);
+    }
+    S.playQuestions=JSON.parse(raw);
+    S.playStep=S.playQuestions.length?'playing':'mode';
+    if(!S.playQuestions.length)alert('Impossibile generare le domande. Riprova.');
+  }catch(e){S.playStep='mode';alert('Errore: '+e.message);}
+  render();
+}
+
+function nextQ(correct) {
+  if(correct)S.playScore++;
+  const nxt=S.playIndex+1;
+  if(nxt>=S.playQuestions.length){
+    const pct=Math.round(S.playScore/S.playQuestions.length*100);
+    S.progress.push({id:uid(),topic:S.playTopic,mode:S.playMode,score:S.playScore,total:S.playQuestions.length,pct,date:Date.now()});
+    save();S.playStep='score';
+  }else{S.playIndex=nxt;S.playAnswer=null;S.cardFlipped=false;}
+  render();
+}
+
+// ═══════════════════════════════════════════
+// MEMORY EVENTS
+// ═══════════════════════════════════════════
+function bindMemoryEvents() {
+  document.querySelectorAll('[data-mt]').forEach(b=>b.addEventListener('click',()=>{
+    const topic=b.dataset.mt,subject=b.dataset.ms;
+    newSession();S.view='chat';render();
+    setTimeout(()=>doSend(`Voglio ripassare "${topic}" (materia: ${subject}). Da dove iniziamo?`),80);
+  }));
+}
+
+// ═══════════════════════════════════════════
+// SETTINGS BUTTON (User icon in chat header)
+// ═══════════════════════════════════════════
+// Accessible via long press on tab bar title — add a gear to progress view header
+// Actually add it as a floating button
+function addSettingsBtn() {
+  const btn=document.createElement('button');
+  btn.innerHTML='⚙️';
+  btn.className='fixed top-3 right-3 z-40 w-9 h-9 flex items-center justify-center rounded-full bg-white border border-gray-200 shadow-sm text-sm hover:bg-gray-50 transition-colors';
+  btn.addEventListener('click',()=>{S.showSettings=true;render();});
+  document.body.appendChild(btn);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+newSession();
+render();
+if(S.apiKey) addSettingsBtn();
+</script>
+</body>
+</html>
