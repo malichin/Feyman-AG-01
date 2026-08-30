@@ -12,8 +12,11 @@ var Workout = (function () {
       .map(function (ex, i) {
         return (
           '<li class="exercise">' +
+          '<div class="exercise-icon"><img src="' + ex.image + '" alt="' + ex.name + '"></div>' +
+          '<div class="exercise-body">' +
           '<label class="checkbox"><input type="checkbox" data-ex="' + i + '"> <strong>' + ex.name + '</strong> — ' + ex.target + '</label>' +
           '<div class="muted small">' + ex.note + '</div>' +
+          '</div>' +
           '</li>'
         );
       })

@@ -40,9 +40,12 @@ var Nutrition = (function () {
     tagLabel += r.tags.indexOf('highProtein') !== -1 ? '<span class="tag">ricco di proteine</span>' : '';
     return (
       '<li class="recipe-card">' +
+      '<div class="recipe-icon"><img src="' + r.image + '" alt="' + r.name + '"></div>' +
+      '<div>' +
       '<strong>' + r.name + '</strong> ' + tagLabel +
       '<div class="muted small">' + r.kcal + ' kcal — P ' + r.proteinG + 'g / C ' + r.carbsG + 'g / G ' + r.fatG + 'g</div>' +
       '<div class="muted small">Ingredienti: ' + r.ingredients.join(', ') + '</div>' +
+      '</div>' +
       '</li>'
     );
   }
