@@ -66,6 +66,17 @@ var Nutrition = (function () {
       '<p>Consumate finora: <strong>' + sum.kcal + ' kcal</strong> (P ' + sum.proteinG + 'g / C ' + sum.carbsG + 'g / G ' + sum.fatG + 'g)</p>' +
       '<p class="muted">Rimangono circa ' + remainingKcal + ' kcal e ' + remainingProtein + 'g di proteine per oggi.</p>' +
       mealsHtml(day) +
+      '<h3>Aggiungi da un alimento comune</h3>' +
+      '<p class="muted small">Non sai le calorie? Scegli un alimento e scrivi i grammi: le calcolo io.</p>' +
+      '<form id="quick-food-form" class="inline-form">' +
+      '<input type="text" name="foodName" list="food-options" placeholder="es. Pesca" required>' +
+      '<datalist id="food-options">' +
+      FoodDb.all().map(function (f) { return '<option value="' + f.name + '">'; }).join('') +
+      '</datalist>' +
+      '<input type="number" name="grams" placeholder="grammi" min="1" value="100" required>' +
+      '<button type="submit" class="btn-secondary">Aggiungi</button>' +
+      '</form>' +
+      '<h3>Oppure inserisci un pasto manualmente</h3>' +
       '<form id="meal-form" class="inline-form">' +
       '<input type="text" name="name" placeholder="Pasto" required>' +
       '<input type="number" name="kcal" placeholder="kcal" required min="0">' +
@@ -88,6 +99,27 @@ var Nutrition = (function () {
       '</form>' +
       '<ul id="fridge-results" class="recipe-list"></ul>' +
       '</div>';
+
+    container.querySelector('#quick-food-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      var food = FoodDb.find(fd.get('foodName'));
+      if (!food) {
+        alert('Alimento non trovato nell\'elenco. Usa il modulo manuale qui sotto per aggiungerlo con i suoi valori.');
+        return;
+      }
+      var grams = Number(fd.get('grams')) || 0;
+      var factor = grams / 100;
+      Store.addNutritionEntry(today, {
+        id: Utils.uid(),
+        name: food.name + ' (' + grams + 'g)',
+        kcal: Utils.round(food.kcal100 * factor),
+        proteinG: Utils.round(food.proteinG100 * factor, 1),
+        carbsG: Utils.round(food.carbsG100 * factor, 1),
+        fatG: Utils.round(food.fatG100 * factor, 1)
+      });
+      render(container);
+    });
 
     container.querySelector('#meal-form').addEventListener('submit', function (e) {
       e.preventDefault();
