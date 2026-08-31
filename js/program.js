@@ -17,10 +17,10 @@ var Program = (function () {
       focus: 'Core + Schiena',
       durationMin: 12,
       exercises: [
-        { name: 'Plank', target: '3 x 30-45s', note: 'Schiena dritta, non far cadere i fianchi.', image: 'assets/exercises/plank.svg' },
-        { name: 'Bird-dog', target: '3 x 8 per lato', note: 'Movimento lento e controllato.', image: 'assets/exercises/bird-dog.svg' },
-        { name: 'Superman hold', target: '3 x 20-30s', note: 'Solleva braccia e gambe di poco, senza forzare la zona lombare.', image: 'assets/exercises/superman.svg' },
-        { name: 'Dead bug', target: '3 x 10 per lato', note: 'Schiena sempre appoggiata a terra.', image: 'assets/exercises/dead-bug.svg' }
+        { name: 'Plank', target: '3 x 30-45s', note: 'Schiena dritta, non far cadere i fianchi.', image: 'assets/exercises/forearm-plank.png' },
+        { name: 'Bird-dog', target: '3 x 8 per lato', note: 'Movimento lento e controllato.', image: 'assets/exercises/bird-dog.png' },
+        { name: 'Superman hold', target: '3 x 20-30s', note: 'Solleva braccia e gambe di poco, senza forzare la zona lombare.', image: 'assets/exercises/superman.png' },
+        { name: 'Dead bug', target: '3 x 10 per lato', note: 'Schiena sempre appoggiata a terra.', image: 'assets/exercises/dead-bug.png' }
       ]
     },
     {
@@ -28,10 +28,10 @@ var Program = (function () {
       focus: 'Ginocchio / Tendini + Polpacci',
       durationMin: 13,
       exercises: [
-        { name: 'Spanish squat o Wall sit isometrico', target: '3 x 30-45s', note: 'Isometria: nessun movimento, solo tenuta. Fonte: Cook & Rio, Lim et al. 2018.', image: 'assets/exercises/wall-sit.svg' },
-        { name: 'Eccentric calf raise (heel drop)', target: '3 x 12-15', note: 'Fase di discesa lenta (3-4s). Protocollo Alfredson per il tendine d\'Achille.', image: 'assets/exercises/calf-raise.svg' },
-        { name: 'Glute bridge', target: '3 x 12', note: 'Spinge con i talloni, contrai i glutei in alto.', image: 'assets/exercises/glute-bridge.svg' },
-        { name: 'Clamshell', target: '2 x 12 per lato', note: 'Rinforza l\'anca per ridurre lo stress sul ginocchio.', image: 'assets/exercises/clamshell.svg' }
+        { name: 'Spanish squat o Wall sit isometrico', target: '3 x 30-45s', note: 'Isometria: nessun movimento, solo tenuta. Fonte: Cook & Rio, Lim et al. 2018.', image: 'assets/exercises/wall-sit.png' },
+        { name: 'Eccentric calf raise (heel drop)', target: '3 x 12-15', note: 'Fase di discesa lenta (3-4s). Protocollo Alfredson per il tendine d\'Achille.', image: 'assets/exercises/calf-raise.png' },
+        { name: 'Glute bridge', target: '3 x 12', note: 'Spinge con i talloni, contrai i glutei in alto.', image: 'assets/exercises/glute-bridge.png' },
+        { name: 'Clamshell', target: '2 x 12 per lato', note: 'Rinforza l\'anca per ridurre lo stress sul ginocchio.', image: 'assets/exercises/clamshell.png' }
       ]
     },
     {
@@ -39,10 +39,10 @@ var Program = (function () {
       focus: 'Spalle + Core',
       durationMin: 11,
       exercises: [
-        { name: 'Wall slides', target: '2 x 10', note: 'Schiena e braccia a contatto col muro per tutto il movimento.', image: 'assets/exercises/wall-slides.svg' },
-        { name: 'Prone Y-T-W raises', target: '2 x 10 per lettera', note: 'A pancia in giù, senza elastico, movimenti piccoli e controllati.', image: 'assets/exercises/y-t-w.svg' },
-        { name: 'Plank shoulder taps', target: '3 x 20 tocchi', note: 'Bacino fermo, non ruotare i fianchi.', image: 'assets/exercises/plank.svg' },
-        { name: 'Side plank', target: '2 x 20-30s per lato', note: 'Corpo in linea retta.', image: 'assets/exercises/side-plank.svg' }
+        { name: 'Wall slides', target: '2 x 10', note: 'Schiena e braccia a contatto col muro per tutto il movimento.', image: 'assets/exercises/wall-slides.png' },
+        { name: 'Prone Y-T-W raises', target: '2 x 10 per lettera', note: 'A pancia in giù, senza elastico, movimenti piccoli e controllati.', image: 'assets/exercises/y-t-w.png' },
+        { name: 'Plank shoulder taps', target: '3 x 20 tocchi', note: 'Bacino fermo, non ruotare i fianchi.', image: 'assets/exercises/plank.png' },
+        { name: 'Side plank', target: '2 x 20-30s per lato', note: 'Corpo in linea retta.', image: 'assets/exercises/side-plank.png' }
       ]
     },
     {
@@ -50,10 +50,10 @@ var Program = (function () {
       focus: 'Cosce (quad/hamstring) + stabilità ginocchio',
       durationMin: 13,
       exercises: [
-        { name: 'Squat a corpo libero', target: '3 x 10', note: 'Solo nel range di movimento indolore.', image: 'assets/exercises/squat.svg' },
-        { name: 'Step-up basso', target: '2 x 8 per lato', note: 'Gradino basso, salita controllata, niente slancio.', image: 'assets/exercises/step-up.svg' },
-        { name: 'Hamstring bridge', target: '3 x 12', note: 'Talloni appoggiati, spinta con i femorali.', image: 'assets/exercises/glute-bridge.svg' },
-        { name: 'Terminal knee extension isometrica', target: '2 x 8 (tenute da 15s)', note: 'Piccola estensione finale del ginocchio, utile per la stabilità.', image: 'assets/exercises/terminal-knee-extension.svg' }
+        { name: 'Squat a corpo libero', target: '3 x 10', note: 'Solo nel range di movimento indolore.', image: 'assets/exercises/squat.png' },
+        { name: 'Step-up basso', target: '2 x 8 per lato', note: 'Gradino basso, salita controllata, niente slancio.', image: 'assets/exercises/step-up.png' },
+        { name: 'Hamstring bridge', target: '3 x 12', note: 'Talloni appoggiati, spinta con i femorali.', image: 'assets/exercises/glute-bridge.png' },
+        { name: 'Terminal knee extension isometrica', target: '2 x 8 (tenute da 15s)', note: 'Piccola estensione finale del ginocchio, utile per la stabilità.', image: 'assets/exercises/terminal-knee-extension.png' }
       ]
     },
     {
@@ -61,10 +61,10 @@ var Program = (function () {
       focus: 'Circuito metabolico a basso impatto',
       durationMin: 12,
       exercises: [
-        { name: 'Squat lenti', target: '4 giri x 30-40s lavoro / 20s recupero', note: 'Nessun salto: nessun impatto extra su ginocchio/tendini.', image: 'assets/exercises/squat.svg' },
-        { name: 'Mountain climber lento', target: 'incluso nel circuito', note: 'Ritmo controllato, non esplosivo.', image: 'assets/exercises/mountain-climber.svg' },
-        { name: 'Marcia alta sul posto', target: 'incluso nel circuito', note: 'Ginocchia alte ma appoggio morbido.', image: 'assets/exercises/marching.svg' },
-        { name: 'Plank-to-push-up', target: 'incluso nel circuito', note: 'Movimento lento, core stabile.', image: 'assets/exercises/plank-pushup.svg' }
+        { name: 'Squat lenti', target: '4 giri x 30-40s lavoro / 20s recupero', note: 'Nessun salto: nessun impatto extra su ginocchio/tendini.', image: 'assets/exercises/squat.png' },
+        { name: 'Mountain climber lento', target: 'incluso nel circuito', note: 'Ritmo controllato, non esplosivo.', image: 'assets/exercises/mountain-climber.png' },
+        { name: 'Marcia alta sul posto', target: 'incluso nel circuito', note: 'Ginocchia alte ma appoggio morbido.', image: 'assets/exercises/marching.png' },
+        { name: 'Plank-to-push-up', target: 'incluso nel circuito', note: 'Movimento lento, core stabile.', image: 'assets/exercises/plank-pushup.png' }
       ]
     }
   ];
