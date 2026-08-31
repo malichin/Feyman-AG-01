@@ -31,7 +31,10 @@ var Workout = (function () {
       log
         .map(function (s) {
           var label = s.type === 'esterno' ? s.name : 'Programma: ' + s.focus;
-          return '<li>' + Utils.formatDateShort(s.date) + ' — ' + label + '</li>';
+          return (
+            '<li><span>' + Utils.formatDateShort(s.date) + ' — ' + label + '</span>' +
+            ' <button class="link-btn" data-remove-session="' + s.id + '">rimuovi</button></li>'
+          );
         })
         .join('') +
       '</ul>'
@@ -87,6 +90,13 @@ var Workout = (function () {
         name: (fd.get('name') || '').trim()
       });
       render(container);
+    });
+
+    container.querySelectorAll('[data-remove-session]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        Store.removeWorkoutSession(btn.getAttribute('data-remove-session'));
+        render(container);
+      });
     });
   }
 
